@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import type Plyr from 'plyr';
+import Image from 'next/image';
 import { getSupabaseBrowserClient } from '../lib/supabase-browser';
 import {
   buildMergeClusters,
@@ -10,6 +11,11 @@ import {
   normalizeSegment,
   type MergeCluster,
 } from '../lib/annotation-utils';
+import {
+  getDefaultFaceSelection,
+  normalizeFaceBox,
+  type FaceBox,
+} from '../lib/face-utils';
 
 type Mode = 'practice' | 'supervision';
 
@@ -30,7 +36,23 @@ type AnnotationRow = {
   end_sec: number;
   drivers: string[];
   comment: string | null;
+  face_box: FaceBox | null;
   created_at: string;
+};
+
+type BlazeFacePrediction = {
+  topLeft: [number, number];
+  bottomRight: [number, number];
+  probability?: [number] | number[];
+};
+
+type BlazeFaceModel = {
+  estimateFaces: (
+    input: HTMLCanvasElement | HTMLVideoElement,
+    returnTensors?: boolean,
+    flipHorizontal?: boolean,
+    annotateBoxes?: boolean,
+  ) => Promise<BlazeFacePrediction[]>;
 };
 
 const MIN_SEGMENT_SECONDS = 2;
@@ -260,7 +282,7 @@ async function loadAnnotations(
 ): Promise<{ rows: AnnotationRow[]; error: string | null }> {
   const { data, error } = await supabase
     .from('annotations')
-    .select('id,video_id,user_id,start_sec,end_sec,drivers,comment,created_at')
+    .select('id,video_id,user_id,start_sec,end_sec,drivers,comment,face_box,created_at')
     .eq('video_id', videoId)
     .order('start_sec', { ascending: true });
   if (error) {
@@ -300,6 +322,12 @@ export default function Home() {
   const [comment, setComment] = useState('');
   const [quickMode, setQuickMode] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [currentVideoTime, setCurrentVideoTime] = useState(0);
+  const [detectedFaces, setDetectedFaces] = useState<FaceBox[]>([]);
+  const [selectedFaceIndex, setSelectedFaceIndex] = useState<number | null>(null);
+  const [facePreviewDataUrl, setFacePreviewDataUrl] = useState('');
+  const [isDetectingFaces, setIsDetectingFaces] = useState(false);
+  const [faceDetectMessage, setFaceDetectMessage] = useState('');
 
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
@@ -326,11 +354,19 @@ export default function Home() {
   const annotationButtonRef = useRef<HTMLButtonElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<Plyr | null>(null);
+  const faceModelRef = useRef<BlazeFaceModel | null>(null);
 
   const selectedVideo = useMemo(
     () => videos.find((video) => video.id === selectedVideoId) ?? null,
     [selectedVideoId, videos],
   );
+
+  useEffect(() => {
+    setDetectedFaces([]);
+    setSelectedFaceIndex(null);
+    setFacePreviewDataUrl('');
+    setFaceDetectMessage('');
+  }, [selectedVideoId]);
 
   useEffect(() => {
     if (magicCooldown <= 0) {
@@ -555,6 +591,85 @@ export default function Home() {
     }
   }, [playbackRate]);
 
+  const loadFaceModel = useCallback(async (): Promise<BlazeFaceModel> => {
+    if (faceModelRef.current) {
+      return faceModelRef.current;
+    }
+    const tf = await import('@tensorflow/tfjs-core');
+    await import('@tensorflow/tfjs-converter');
+    await import('@tensorflow/tfjs-backend-webgl');
+    if (tf.getBackend() !== 'webgl') {
+      await tf.setBackend('webgl');
+      await tf.ready();
+    }
+    const blaze = await import('@tensorflow-models/blazeface');
+    const model = (await blaze.load()) as unknown as BlazeFaceModel;
+    faceModelRef.current = model;
+    return model;
+  }, []);
+
+  const detectFacesFromCurrentFrame = useCallback(async () => {
+    const media = videoRef.current;
+    if (!media || media.videoWidth === 0 || media.videoHeight === 0) {
+      setDetectedFaces([]);
+      setSelectedFaceIndex(null);
+      setFacePreviewDataUrl('');
+      setFaceDetectMessage('当前帧尚不可用，请先播放或拖动一次视频。');
+      return;
+    }
+
+    setIsDetectingFaces(true);
+    setFaceDetectMessage('');
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = media.videoWidth;
+      canvas.height = media.videoHeight;
+      const context = canvas.getContext('2d');
+      if (!context) {
+        setDetectedFaces([]);
+        setSelectedFaceIndex(null);
+        setFacePreviewDataUrl('');
+        setFaceDetectMessage('无法读取视频帧。');
+        return;
+      }
+      context.drawImage(media, 0, 0, canvas.width, canvas.height);
+
+      const model = await loadFaceModel();
+      const predictions = await model.estimateFaces(canvas, false, false, true);
+      const boxes = predictions
+        .map((prediction) => {
+          const rawScore = prediction.probability?.[0] ?? 0.7;
+          return normalizeFaceBox(
+            prediction.topLeft,
+            prediction.bottomRight,
+            canvas.width,
+            canvas.height,
+            rawScore,
+          );
+        })
+        .filter((item): item is FaceBox => item !== null);
+
+      setDetectedFaces(boxes);
+      setSelectedFaceIndex(getDefaultFaceSelection(boxes.length));
+      setFacePreviewDataUrl(canvas.toDataURL('image/jpeg', 0.75));
+      if (boxes.length === 0) {
+        setFaceDetectMessage('未检测到明显人脸，将仅保存驱力与时间片段。');
+      } else if (boxes.length === 1) {
+        setFaceDetectMessage('已检测到 1 张人脸，已自动选中。');
+      } else {
+        setFaceDetectMessage(`检测到 ${boxes.length} 张人脸，请点击要标注的对象。`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setDetectedFaces([]);
+      setSelectedFaceIndex(null);
+      setFacePreviewDataUrl('');
+      setFaceDetectMessage(`人脸检测失败：${message}`);
+    } finally {
+      setIsDetectingFaces(false);
+    }
+  }, [loadFaceModel]);
+
   const openAnnotationPanel = () => {
     const current = videoRef.current?.currentTime ?? 0;
     const normalized = normalizeSegment(
@@ -566,6 +681,7 @@ export default function Home() {
     setSegmentStart(normalized.start);
     setSegmentEnd(normalized.end);
     setIsAnnotationOpen(true);
+    void detectFacesFromCurrentFrame();
   };
 
   const handleAddVideo = async (event: FormEvent) => {
@@ -635,14 +751,30 @@ export default function Home() {
       SNAP_STEP_SECONDS,
       MIN_SEGMENT_SECONDS,
     );
+    const selectedFaceBox =
+      selectedFaceIndex !== null && detectedFaces[selectedFaceIndex]
+        ? detectedFaces[selectedFaceIndex]
+        : null;
     setSaving(true);
-    const { error } = await supabase.from('annotations').insert({
+    const payload = {
       video_id: selectedVideo.id,
       start_sec: normalized.start,
       end_sec: normalized.end,
       drivers: selectedDrivers,
       comment: quickMode ? null : comment.trim() || null,
-    });
+      face_box: selectedFaceBox,
+    };
+    let { error } = await supabase.from('annotations').insert(payload);
+    if (error?.message.includes('face_box')) {
+      const fallbackResult = await supabase.from('annotations').insert({
+        ...payload,
+        face_box: null,
+      });
+      error = fallbackResult.error;
+      if (!error) {
+        setQueryError('已保存标注。当前数据库缺少 face_box 字段，请执行新 SQL migration。');
+      }
+    }
     setSaving(false);
     if (error) {
       setQueryError(`保存标注失败：${error.message}`);
@@ -664,6 +796,17 @@ export default function Home() {
       ? annotations.filter((item) => item.user_id === session.user.id)
       : annotations;
   }, [annotations, mode, session]);
+
+  const activeFaceAnnotations = useMemo(
+    () =>
+      visibleAnnotations.filter(
+        (item) =>
+          item.face_box &&
+          currentVideoTime >= Number(item.start_sec) &&
+          currentVideoTime <= Number(item.end_sec),
+      ),
+    [currentVideoTime, visibleAnnotations],
+  );
 
   const clusters = useMemo<MergeCluster<AnnotationRow>[]>(
     () => (mode === 'supervision' ? buildMergeClusters(visibleAnnotations, MERGE_THRESHOLD) : []),
@@ -919,6 +1062,7 @@ export default function Home() {
                 src={playUrl}
                 playsInline
                 preload='metadata'
+                onTimeUpdate={(event) => setCurrentVideoTime(event.currentTarget.currentTime)}
                 className='h-[calc(100vh-92px)] w-full bg-black'
               />
             ) : (
@@ -927,6 +1071,32 @@ export default function Home() {
               </div>
             )}
           </div>
+
+          {activeFaceAnnotations.map((item) => {
+            const face = item.face_box;
+            if (!face) {
+              return null;
+            }
+            const labels = item.drivers
+              .map((driver) => DRIVE_LABEL_MAP[driver] ?? driver)
+              .join('、');
+            return (
+              <div
+                key={`face-overlay-${item.id}`}
+                className='pointer-events-none absolute z-10 rounded border-2 border-blue-400'
+                style={{
+                  left: `${face.left * 100}%`,
+                  top: `${face.top * 100}%`,
+                  width: `${face.width * 100}%`,
+                  height: `${face.height * 100}%`,
+                }}
+              >
+                <span className='absolute -top-7 left-0 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white shadow-sm'>
+                  {labels}
+                </span>
+              </div>
+            );
+          })}
 
           <div className='pointer-events-none absolute bottom-[calc(96px+env(safe-area-inset-bottom))] right-5 z-20 flex flex-col items-end gap-2'>
             <div className='pointer-events-auto flex items-center gap-2'>
@@ -1122,6 +1292,62 @@ export default function Home() {
                   );
                 })}
               </div>
+
+              <section className='rounded-lg border border-zinc-200 bg-zinc-50 p-2.5'>
+                <div className='mb-2 flex items-center justify-between'>
+                  <p className='text-xs font-medium text-zinc-700'>人脸定位（仅标注时检测）</p>
+                  <button
+                    type='button'
+                    className='rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 disabled:opacity-50'
+                    disabled={isDetectingFaces}
+                    onClick={() => void detectFacesFromCurrentFrame()}
+                  >
+                    {isDetectingFaces ? '识别中...' : '重新检测'}
+                  </button>
+                </div>
+                {faceDetectMessage ? (
+                  <p className='mb-2 text-xs text-zinc-600'>{faceDetectMessage}</p>
+                ) : null}
+                {facePreviewDataUrl ? (
+                  <div className='relative overflow-hidden rounded-md border border-zinc-300 bg-black/80'>
+                    <Image
+                      src={facePreviewDataUrl}
+                      alt='当前帧人脸检测结果'
+                      width={640}
+                      height={360}
+                      unoptimized
+                      className='h-auto w-full'
+                    />
+                    {detectedFaces.map((box, index) => {
+                      const selected = index === selectedFaceIndex;
+                      return (
+                        <button
+                          key={`detected-face-${index}`}
+                          type='button'
+                          className={`absolute rounded border-2 text-[10px] font-semibold ${
+                            selected ? 'border-blue-500 bg-blue-500/20 text-blue-700' : 'border-emerald-400 bg-emerald-300/20 text-emerald-700'
+                          }`}
+                          style={{
+                            left: `${box.left * 100}%`,
+                            top: `${box.top * 100}%`,
+                            width: `${box.width * 100}%`,
+                            height: `${box.height * 100}%`,
+                          }}
+                          onClick={() => setSelectedFaceIndex(index)}
+                          aria-label={`选择第 ${index + 1} 张人脸`}
+                          title={`第 ${index + 1} 张人脸`}
+                        >
+                          <span className='absolute left-1 top-1 rounded bg-black/60 px-1 text-[10px] text-white'>
+                            {selected ? '已选中' : `人脸 ${index + 1}`}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className='text-xs text-zinc-500'>将使用当前播放帧检测人脸。若检测不到，可直接保存驱力标注。</p>
+                )}
+              </section>
 
               <label className='flex items-center gap-2 text-sm text-zinc-700'>
                 <input type='checkbox' checked={quickMode} onChange={(event) => setQuickMode(event.target.checked)} />
