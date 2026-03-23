@@ -3,7 +3,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import type Plyr from 'plyr';
-import Image from 'next/image';
 import { getSupabaseBrowserClient } from '../lib/supabase-browser';
 import {
   buildMergeClusters,
@@ -12,10 +11,11 @@ import {
   type MergeCluster,
 } from '../lib/annotation-utils';
 import {
-  getDefaultFaceSelection,
-  normalizeFaceBox,
-  type FaceBox,
-} from '../lib/face-utils';
+  pickNearestPersonFrameCandidates,
+  type NormalizedBox,
+  type PersonCandidate,
+  type PersonFrameRow,
+} from '../lib/person-utils';
 
 type Mode = 'practice' | 'supervision';
 
@@ -36,23 +36,11 @@ type AnnotationRow = {
   end_sec: number;
   drivers: string[];
   comment: string | null;
-  face_box: FaceBox | null;
+  person_track_id: number | null;
+  person_ts_sec: number | null;
+  person_box: NormalizedBox | null;
+  face_box?: NormalizedBox | null;
   created_at: string;
-};
-
-type BlazeFacePrediction = {
-  topLeft: [number, number];
-  bottomRight: [number, number];
-  probability?: [number] | number[];
-};
-
-type BlazeFaceModel = {
-  estimateFaces: (
-    input: HTMLCanvasElement | HTMLVideoElement,
-    returnTensors?: boolean,
-    flipHorizontal?: boolean,
-    annotateBoxes?: boolean,
-  ) => Promise<BlazeFacePrediction[]>;
 };
 
 const MIN_SEGMENT_SECONDS = 2;
@@ -84,14 +72,14 @@ const ONBOARDING_STEPS: OnboardingStep[] = [
   {
     title: '添加标注',
     description:
-      '播放器右下角点击“标注”按钮即可打开标注面板，默认会自动填入当前时间前后约 2 秒。',
+      '播放器下方工具栏点击“标注”按钮即可打开标注面板，默认会自动填入当前时间前后约 2 秒。',
     targetId: 'annotation_button',
     requireAction: false,
   },
   {
     title: '慢放与速度',
     description:
-      '播放器右下角的速度按钮可调节播放速度，支持 0.2x、0.3x、0.5x、0.75x 和 1x。',
+      '播放器下方工具栏的速度按钮可调节播放速度，支持 0.2x、0.3x、0.5x、0.75x 和 1x。',
     targetId: 'speed_button',
     requireAction: false,
   },
@@ -282,29 +270,65 @@ async function loadAnnotations(
 ): Promise<{ rows: AnnotationRow[]; error: string | null }> {
   const primary = await supabase
     .from('annotations')
-    .select('id,video_id,user_id,start_sec,end_sec,drivers,comment,face_box,created_at')
+    .select(
+      'id,video_id,user_id,start_sec,end_sec,drivers,comment,person_track_id,person_ts_sec,person_box,face_box,created_at',
+    )
     .eq('video_id', videoId)
     .order('start_sec', { ascending: true });
   if (!primary.error) {
-    return { rows: (primary.data ?? []) as AnnotationRow[], error: null };
+    const rows = ((primary.data ?? []) as AnnotationRow[]).map((row) => ({
+      ...row,
+      person_box: row.person_box ?? row.face_box ?? null,
+    }));
+    return { rows, error: null };
   }
-  if (!primary.error.message.includes('face_box')) {
+  if (
+    !primary.error.message.includes('person_track_id') &&
+    !primary.error.message.includes('person_box') &&
+    !primary.error.message.includes('person_ts_sec') &&
+    !primary.error.message.includes('face_box')
+  ) {
     return { rows: [], error: `读取 annotations 表失败：${primary.error.message}` };
   }
 
   const fallback = await supabase
     .from('annotations')
-    .select('id,video_id,user_id,start_sec,end_sec,drivers,comment,created_at')
+    .select('id,video_id,user_id,start_sec,end_sec,drivers,comment,face_box,created_at')
     .eq('video_id', videoId)
     .order('start_sec', { ascending: true });
   if (fallback.error) {
     return { rows: [], error: `读取 annotations 表失败：${fallback.error.message}` };
   }
   const rows = (fallback.data ?? []).map((row) => ({
-    ...(row as Omit<AnnotationRow, 'face_box'>),
-    face_box: null,
+    ...(row as Omit<AnnotationRow, 'person_track_id' | 'person_ts_sec' | 'person_box'>),
+    person_track_id: null,
+    person_ts_sec: null,
+    person_box: ((row as { face_box?: NormalizedBox | null }).face_box ?? null) as
+      | NormalizedBox
+      | null,
   }));
   return { rows, error: null };
+}
+
+async function loadPersonFrameRows(
+  supabase: SupabaseClient,
+  videoId: string,
+  currentTime: number,
+): Promise<{ rows: PersonFrameRow[]; error: string | null }> {
+  const start = Math.max(0, currentTime - 0.8);
+  const end = currentTime + 0.8;
+  const { data, error } = await supabase
+    .from('video_person_frames')
+    .select('ts_sec,track_id,left_ratio,top_ratio,width_ratio,height_ratio,score')
+    .eq('video_id', videoId)
+    .gte('ts_sec', start)
+    .lte('ts_sec', end)
+    .order('ts_sec', { ascending: true })
+    .order('score', { ascending: false });
+  if (error) {
+    return { rows: [], error: `读取人体候选失败：${error.message}` };
+  }
+  return { rows: (data ?? []) as PersonFrameRow[], error: null };
 }
 
 export default function Home() {
@@ -339,11 +363,12 @@ export default function Home() {
   const [quickMode, setQuickMode] = useState(true);
   const [saving, setSaving] = useState(false);
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
-  const [detectedFaces, setDetectedFaces] = useState<FaceBox[]>([]);
-  const [selectedFaceIndex, setSelectedFaceIndex] = useState<number | null>(null);
-  const [facePreviewDataUrl, setFacePreviewDataUrl] = useState('');
-  const [isDetectingFaces, setIsDetectingFaces] = useState(false);
-  const [faceDetectMessage, setFaceDetectMessage] = useState('');
+  const [personCandidates, setPersonCandidates] = useState<PersonCandidate[]>([]);
+  const [selectedPersonTrackId, setSelectedPersonTrackId] = useState<number | null>(null);
+  const [selectedPersonBox, setSelectedPersonBox] = useState<NormalizedBox | null>(null);
+  const [selectedPersonTsSec, setSelectedPersonTsSec] = useState<number | null>(null);
+  const [isLoadingPersonCandidates, setIsLoadingPersonCandidates] = useState(false);
+  const [personCandidateMessage, setPersonCandidateMessage] = useState('');
 
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
@@ -370,7 +395,6 @@ export default function Home() {
   const annotationButtonRef = useRef<HTMLButtonElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<Plyr | null>(null);
-  const faceModelRef = useRef<BlazeFaceModel | null>(null);
 
   const selectedVideo = useMemo(
     () => videos.find((video) => video.id === selectedVideoId) ?? null,
@@ -378,10 +402,11 @@ export default function Home() {
   );
 
   useEffect(() => {
-    setDetectedFaces([]);
-    setSelectedFaceIndex(null);
-    setFacePreviewDataUrl('');
-    setFaceDetectMessage('');
+    setPersonCandidates([]);
+    setSelectedPersonTrackId(null);
+    setSelectedPersonBox(null);
+    setSelectedPersonTsSec(null);
+    setPersonCandidateMessage('');
   }, [selectedVideoId]);
 
   useEffect(() => {
@@ -607,87 +632,50 @@ export default function Home() {
     }
   }, [playbackRate]);
 
-  const loadFaceModel = useCallback(async (): Promise<BlazeFaceModel> => {
-    if (faceModelRef.current) {
-      return faceModelRef.current;
-    }
-    const tf = await import('@tensorflow/tfjs-core');
-    await import('@tensorflow/tfjs-converter');
-    await import('@tensorflow/tfjs-backend-webgl');
-    if (tf.getBackend() !== 'webgl') {
-      await tf.setBackend('webgl');
-      await tf.ready();
-    }
-    const blaze = await import('@tensorflow-models/blazeface');
-    const model = (await blaze.load()) as unknown as BlazeFaceModel;
-    faceModelRef.current = model;
-    return model;
-  }, []);
-
-  const detectFacesFromCurrentFrame = useCallback(async () => {
-    const media = videoRef.current;
-    if (!media || media.videoWidth === 0 || media.videoHeight === 0) {
-      setDetectedFaces([]);
-      setSelectedFaceIndex(null);
-      setFacePreviewDataUrl('');
-      setFaceDetectMessage('当前帧尚不可用，请先播放或拖动一次视频。');
-      return;
-    }
-
-    setIsDetectingFaces(true);
-    setFaceDetectMessage('');
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = media.videoWidth;
-      canvas.height = media.videoHeight;
-      const context = canvas.getContext('2d');
-      if (!context) {
-        setDetectedFaces([]);
-        setSelectedFaceIndex(null);
-        setFacePreviewDataUrl('');
-        setFaceDetectMessage('无法读取视频帧。');
+  const loadPersonCandidatesForTime = useCallback(
+    async (currentTime: number) => {
+      if (!supabase || !selectedVideoId) {
         return;
       }
-      context.drawImage(media, 0, 0, canvas.width, canvas.height);
-
-      const model = await loadFaceModel();
-      const predictions = await model.estimateFaces(canvas, false, false, true);
-      const boxes = predictions
-        .map((prediction) => {
-          const rawScore = prediction.probability?.[0] ?? 0.7;
-          return normalizeFaceBox(
-            prediction.topLeft,
-            prediction.bottomRight,
-            canvas.width,
-            canvas.height,
-            rawScore,
-          );
-        })
-        .filter((item): item is FaceBox => item !== null);
-
-      setDetectedFaces(boxes);
-      setSelectedFaceIndex(getDefaultFaceSelection(boxes.length));
-      setFacePreviewDataUrl(canvas.toDataURL('image/jpeg', 0.75));
-      if (boxes.length === 0) {
-        setFaceDetectMessage('未检测到明显人脸，将仅保存驱力与时间片段。');
-      } else if (boxes.length === 1) {
-        setFaceDetectMessage('已检测到 1 张人脸，已自动选中。');
-      } else {
-        setFaceDetectMessage(`检测到 ${boxes.length} 张人脸，请点击要标注的对象。`);
+      setIsLoadingPersonCandidates(true);
+      setPersonCandidateMessage('');
+      const result = await loadPersonFrameRows(supabase, selectedVideoId, currentTime);
+      setIsLoadingPersonCandidates(false);
+      if (result.error) {
+        setPersonCandidates([]);
+        setSelectedPersonTrackId(null);
+        setSelectedPersonBox(null);
+        setSelectedPersonTsSec(null);
+        setPersonCandidateMessage(result.error);
+        return;
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setDetectedFaces([]);
-      setSelectedFaceIndex(null);
-      setFacePreviewDataUrl('');
-      const corsHint = message.includes('tainted canvases')
-        ? '人脸检测失败：当前视频源未允许跨域 Canvas 读取，请检查 R2 CORS 并确认允许来源域名。'
-        : `人脸检测失败：${message}`;
-      setFaceDetectMessage(corsHint);
-    } finally {
-      setIsDetectingFaces(false);
-    }
-  }, [loadFaceModel]);
+
+      const candidates = pickNearestPersonFrameCandidates(result.rows, currentTime);
+      setPersonCandidates(candidates);
+      if (candidates.length === 0) {
+        setSelectedPersonTrackId(null);
+        setSelectedPersonBox(null);
+        setSelectedPersonTsSec(null);
+        setPersonCandidateMessage('当前时刻附近没有离线人体候选，可直接保存驱力标注。');
+        return;
+      }
+
+      if (candidates.length === 1) {
+        const only = candidates[0];
+        setSelectedPersonTrackId(only.trackId);
+        setSelectedPersonBox(only.box);
+        setSelectedPersonTsSec(only.tsSec);
+        setPersonCandidateMessage('已自动选中 1 个候选人体。');
+        return;
+      }
+
+      setSelectedPersonTrackId(null);
+      setSelectedPersonBox(null);
+      setSelectedPersonTsSec(null);
+      setPersonCandidateMessage(`检测到 ${candidates.length} 个人体候选，请选择目标。`);
+    },
+    [selectedVideoId, supabase],
+  );
 
   const openAnnotationPanel = () => {
     const current = videoRef.current?.currentTime ?? 0;
@@ -700,7 +688,7 @@ export default function Home() {
     setSegmentStart(normalized.start);
     setSegmentEnd(normalized.end);
     setIsAnnotationOpen(true);
-    void detectFacesFromCurrentFrame();
+    void loadPersonCandidatesForTime(current);
   };
 
   const handleAddVideo = async (event: FormEvent) => {
@@ -770,10 +758,6 @@ export default function Home() {
       SNAP_STEP_SECONDS,
       MIN_SEGMENT_SECONDS,
     );
-    const selectedFaceBox =
-      selectedFaceIndex !== null && detectedFaces[selectedFaceIndex]
-        ? detectedFaces[selectedFaceIndex]
-        : null;
     setSaving(true);
     const payload = {
       video_id: selectedVideo.id,
@@ -781,17 +765,25 @@ export default function Home() {
       end_sec: normalized.end,
       drivers: selectedDrivers,
       comment: quickMode ? null : comment.trim() || null,
-      face_box: selectedFaceBox,
+      person_track_id: selectedPersonTrackId,
+      person_ts_sec: selectedPersonTsSec,
+      person_box: selectedPersonBox,
     };
     let { error } = await supabase.from('annotations').insert(payload);
-    if (error?.message.includes('face_box')) {
+    if (
+      error?.message.includes('person_track_id') ||
+      error?.message.includes('person_box') ||
+      error?.message.includes('person_ts_sec')
+    ) {
       const fallbackResult = await supabase.from('annotations').insert({
         ...payload,
-        face_box: null,
+        person_track_id: null,
+        person_ts_sec: null,
+        person_box: null,
       });
       error = fallbackResult.error;
       if (!error) {
-        setQueryError('已保存标注。当前数据库缺少 face_box 字段，请执行新 SQL migration。');
+        setQueryError('已保存标注。当前数据库缺少 person_* 字段，请执行新 SQL migration。');
       }
     }
     setSaving(false);
@@ -803,6 +795,9 @@ export default function Home() {
     setSegmentEnd(normalized.end + MIN_SEGMENT_SECONDS);
     setSelectedDrivers([]);
     setComment('');
+    setSelectedPersonTrackId(null);
+    setSelectedPersonBox(null);
+    setSelectedPersonTsSec(null);
     setQueryError('');
     await refreshAnnotations();
   };
@@ -816,11 +811,11 @@ export default function Home() {
       : annotations;
   }, [annotations, mode, session]);
 
-  const activeFaceAnnotations = useMemo(
+  const activePersonAnnotations = useMemo(
     () =>
       visibleAnnotations.filter(
         (item) =>
-          item.face_box &&
+          (item.person_box ?? item.face_box) &&
           currentVideoTime >= Number(item.start_sec) &&
           currentVideoTime <= Number(item.end_sec),
       ),
@@ -1091,9 +1086,9 @@ export default function Home() {
             )}
           </div>
 
-          {activeFaceAnnotations.map((item) => {
-            const face = item.face_box;
-            if (!face) {
+          {activePersonAnnotations.map((item) => {
+            const box = item.person_box ?? item.face_box;
+            if (!box) {
               return null;
             }
             const labels = item.drivers
@@ -1101,13 +1096,13 @@ export default function Home() {
               .join('、');
             return (
               <div
-                key={`face-overlay-${item.id}`}
+                key={`person-overlay-${item.id}`}
                 className='pointer-events-none absolute z-10 rounded border-2 border-blue-400'
                 style={{
-                  left: `${face.left * 100}%`,
-                  top: `${face.top * 100}%`,
-                  width: `${face.width * 100}%`,
-                  height: `${face.height * 100}%`,
+                  left: `${box.left * 100}%`,
+                  top: `${box.top * 100}%`,
+                  width: `${box.width * 100}%`,
+                  height: `${box.height * 100}%`,
                 }}
               >
                 <span className='absolute -top-7 left-0 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white shadow-sm'>
@@ -1116,29 +1111,29 @@ export default function Home() {
               </div>
             );
           })}
+        </article>
 
-          <div className='pointer-events-none absolute bottom-[calc(96px+env(safe-area-inset-bottom))] right-5 z-20 flex flex-col items-end gap-2'>
-            <div className='pointer-events-auto flex items-center gap-2'>
-              <button
-                type='button'
-                onClick={() => seekBySeconds(-3)}
-                className='rounded-full bg-white/95 px-3 py-2 text-xs font-medium text-zinc-800 shadow-md hover:bg-white'
-                title='后退 3 秒'
-                aria-label='后退 3 秒'
-              >
-                -3s
-              </button>
-              <button
-                type='button'
-                onClick={() => seekBySeconds(3)}
-                className='rounded-full bg-white/95 px-3 py-2 text-xs font-medium text-zinc-800 shadow-md hover:bg-white'
-                title='前进 3 秒'
-                aria-label='前进 3 秒'
-              >
-                +3s
-              </button>
-            </div>
-            <div className='pointer-events-auto relative'>
+        <div className='mt-2 flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-white shadow-sm'>
+          <div className='flex items-center gap-2'>
+            <button
+              type='button'
+              onClick={() => seekBySeconds(-3)}
+              className='rounded-md border border-zinc-600 px-2.5 py-1 text-xs font-medium hover:bg-zinc-800'
+              title='后退 3 秒'
+              aria-label='后退 3 秒'
+            >
+              -3s
+            </button>
+            <button
+              type='button'
+              onClick={() => seekBySeconds(3)}
+              className='rounded-md border border-zinc-600 px-2.5 py-1 text-xs font-medium hover:bg-zinc-800'
+              title='前进 3 秒'
+              aria-label='前进 3 秒'
+            >
+              +3s
+            </button>
+            <div className='relative'>
               <button
                 ref={speedButtonRef}
                 type='button'
@@ -1146,19 +1141,21 @@ export default function Home() {
                   markOnboardingAction('speed_button');
                   setIsSpeedMenuOpen((value) => !value);
                 }}
-                className='rounded-full bg-white/95 px-4 py-2 text-sm font-medium text-zinc-800 shadow-md hover:bg-white'
+                className='rounded-md border border-zinc-600 px-3 py-1 text-xs font-medium hover:bg-zinc-800'
               >
-                {playbackRate}x
+                速度 {playbackRate}x
               </button>
               {isSpeedMenuOpen ? (
-                <div className='absolute bottom-12 right-0 w-28 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg'>
+                <div className='absolute bottom-10 left-0 z-20 w-28 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg'>
                   {PLAYBACK_RATE_OPTIONS.map((rate) => (
                     <button
                       key={rate}
                       type='button'
                       onClick={() => setSpeed(rate)}
                       className={`w-full rounded-md px-2 py-1.5 text-left text-sm ${
-                        playbackRate === rate ? 'bg-zinc-900 text-white' : 'text-zinc-700 hover:bg-zinc-100'
+                        playbackRate === rate
+                          ? 'bg-zinc-900 text-white'
+                          : 'text-zinc-700 hover:bg-zinc-100'
                       }`}
                     >
                       {rate}x
@@ -1167,21 +1164,21 @@ export default function Home() {
                 </div>
               ) : null}
             </div>
-
-            <button
-              ref={annotationButtonRef}
-              type='button'
-              onClick={() => {
-                markOnboardingAction('annotation_button');
-                openAnnotationPanel();
-              }}
-              className='pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-md hover:bg-blue-700'
-            >
-              <IconAnnotation />
-              标注
-            </button>
           </div>
-        </article>
+
+          <button
+            ref={annotationButtonRef}
+            type='button'
+            onClick={() => {
+              markOnboardingAction('annotation_button');
+              openAnnotationPanel();
+            }}
+            className='inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700'
+          >
+            <IconAnnotation />
+            标注
+          </button>
+        </div>
       </section>
 
       {isLibraryOpen ? (
@@ -1314,57 +1311,80 @@ export default function Home() {
 
               <section className='rounded-lg border border-zinc-200 bg-zinc-50 p-2.5'>
                 <div className='mb-2 flex items-center justify-between'>
-                  <p className='text-xs font-medium text-zinc-700'>人脸定位（仅标注时检测）</p>
+                  <p className='text-xs font-medium text-zinc-700'>人体定位（离线预处理）</p>
                   <button
                     type='button'
                     className='rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 disabled:opacity-50'
-                    disabled={isDetectingFaces}
-                    onClick={() => void detectFacesFromCurrentFrame()}
+                    disabled={isLoadingPersonCandidates}
+                    onClick={() => void loadPersonCandidatesForTime(videoRef.current?.currentTime ?? currentVideoTime)}
                   >
-                    {isDetectingFaces ? '识别中...' : '重新检测'}
+                    {isLoadingPersonCandidates ? '读取中...' : '刷新候选'}
                   </button>
                 </div>
-                {faceDetectMessage ? (
-                  <p className='mb-2 text-xs text-zinc-600'>{faceDetectMessage}</p>
+                {personCandidateMessage ? (
+                  <p className='mb-2 text-xs text-zinc-600'>{personCandidateMessage}</p>
                 ) : null}
-                {facePreviewDataUrl ? (
-                  <div className='relative overflow-hidden rounded-md border border-zinc-300 bg-black/80'>
-                    <Image
-                      src={facePreviewDataUrl}
-                      alt='当前帧人脸检测结果'
-                      width={640}
-                      height={360}
-                      unoptimized
-                      className='h-auto w-full'
-                    />
-                    {detectedFaces.map((box, index) => {
-                      const selected = index === selectedFaceIndex;
-                      return (
-                        <button
-                          key={`detected-face-${index}`}
-                          type='button'
-                          className={`absolute rounded border-2 text-[10px] font-semibold ${
-                            selected ? 'border-blue-500 bg-blue-500/20 text-blue-700' : 'border-emerald-400 bg-emerald-300/20 text-emerald-700'
-                          }`}
-                          style={{
-                            left: `${box.left * 100}%`,
-                            top: `${box.top * 100}%`,
-                            width: `${box.width * 100}%`,
-                            height: `${box.height * 100}%`,
-                          }}
-                          onClick={() => setSelectedFaceIndex(index)}
-                          aria-label={`选择第 ${index + 1} 张人脸`}
-                          title={`第 ${index + 1} 张人脸`}
-                        >
-                          <span className='absolute left-1 top-1 rounded bg-black/60 px-1 text-[10px] text-white'>
-                            {selected ? '已选中' : `人脸 ${index + 1}`}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                {personCandidates.length > 0 ? (
+                  <>
+                    <div className='relative aspect-video overflow-hidden rounded-md border border-zinc-300 bg-zinc-900'>
+                      {personCandidates.map((candidate) => {
+                        const selected = candidate.trackId === selectedPersonTrackId;
+                        return (
+                          <button
+                            key={`person-candidate-${candidate.trackId}`}
+                            type='button'
+                            className={`absolute rounded border-2 text-[10px] font-semibold ${
+                              selected
+                                ? 'border-blue-500 bg-blue-500/20 text-blue-100'
+                                : 'border-emerald-400 bg-emerald-500/20 text-emerald-100'
+                            }`}
+                            style={{
+                              left: `${candidate.box.left * 100}%`,
+                              top: `${candidate.box.top * 100}%`,
+                              width: `${candidate.box.width * 100}%`,
+                              height: `${candidate.box.height * 100}%`,
+                            }}
+                            onClick={() => {
+                              setSelectedPersonTrackId(candidate.trackId);
+                              setSelectedPersonBox(candidate.box);
+                              setSelectedPersonTsSec(candidate.tsSec);
+                            }}
+                            aria-label={`选择轨迹 ${candidate.trackId}`}
+                            title={`轨迹 ${candidate.trackId}`}
+                          >
+                            <span className='absolute left-1 top-1 rounded bg-black/60 px-1 text-[10px] text-white'>
+                              {selected ? `已选 #${candidate.trackId}` : `#${candidate.trackId}`}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className='mt-2 flex flex-wrap gap-1.5'>
+                      {personCandidates.map((candidate) => {
+                        const selected = candidate.trackId === selectedPersonTrackId;
+                        return (
+                          <button
+                            key={`person-chip-${candidate.trackId}`}
+                            type='button'
+                            className={`rounded-full border px-2 py-1 text-[11px] ${
+                              selected
+                                ? 'border-blue-600 bg-blue-50 text-blue-700'
+                                : 'border-zinc-300 bg-white text-zinc-700'
+                            }`}
+                            onClick={() => {
+                              setSelectedPersonTrackId(candidate.trackId);
+                              setSelectedPersonBox(candidate.box);
+                              setSelectedPersonTsSec(candidate.tsSec);
+                            }}
+                          >
+                            轨迹 #{candidate.trackId} · t={candidate.tsSec.toFixed(1)}s · {(candidate.score * 100).toFixed(0)}%
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
                 ) : (
-                  <p className='text-xs text-zinc-500'>将使用当前播放帧检测人脸。若检测不到，可直接保存驱力标注。</p>
+                  <p className='text-xs text-zinc-500'>当前时间未找到离线人体候选，仍可只记录驱力与时间片段。</p>
                 )}
               </section>
 
