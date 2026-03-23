@@ -106,6 +106,21 @@ function IconAnnotation() {
   );
 }
 
+function IconClose() {
+  return (
+    <svg viewBox='0 0 24 24' aria-hidden='true' className='h-4 w-4'>
+      <path
+        d='M18 6L6 18M6 6l12 12'
+        fill='none'
+        stroke='currentColor'
+        strokeWidth='2'
+        strokeLinecap='round'
+        strokeLinejoin='round'
+      />
+    </svg>
+  );
+}
+
 const CUE_ROWS: Array<{ key: keyof DriveCue; icon: string }> = [
   { key: 'lexicon', icon: 'L' },
   { key: 'tone', icon: 'T' },
@@ -798,15 +813,17 @@ export default function Home() {
 
       {isAnnotationOpen ? (
         <div className='fixed inset-0 z-40 flex items-end justify-end bg-black/30 p-4 md:items-center'>
-          <section className='h-full w-full max-w-xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl md:h-auto md:max-h-[90vh]' role='dialog' aria-modal='true'>
+          <section className='h-full w-full max-w-xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl md:h-auto md:max-h-[90vh] md:overflow-visible' role='dialog' aria-modal='true'>
             <div className='mb-3 flex items-center justify-between'>
               <h2 className='text-base font-semibold text-zinc-900'>标注</h2>
               <button
-                className='rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-50'
+                className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
                 onClick={() => setIsAnnotationOpen(false)}
                 type='button'
+                aria-label='关闭'
+                title='关闭'
               >
-                关闭
+                <IconClose />
               </button>
             </div>
 
@@ -841,7 +858,7 @@ export default function Home() {
                       }`}
                     >
                       <span className='font-medium'>{driver.label}</span>
-                      <span className='pointer-events-none absolute left-0 top-full z-10 mt-2 hidden w-[360px] max-w-[78vw] rounded-xl border border-zinc-200 bg-white p-2.5 text-xs text-zinc-700 shadow-md group-hover:block'>
+                      <span className='pointer-events-none absolute left-0 top-full z-[90] mt-2 hidden w-[360px] max-w-[78vw] rounded-xl border border-zinc-200 bg-white p-2.5 text-xs text-zinc-700 shadow-md group-hover:block'>
                         <span className='grid gap-2'>
                           {CUE_ROWS.map((row) => (
                             <span key={row.key} className='flex items-start gap-2 rounded-lg bg-zinc-50 px-2 py-1.5'>
