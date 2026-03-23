@@ -391,7 +391,7 @@ export default function Home() {
         title,
         storage_key: storageKey,
         source_url: videoSourceUrl.trim() || null,
-        provider: 'youtube',
+        provider: 'hosted',
         embed_url: '',
       })
       .select('id,title,storage_key,source_url,created_by,created_at')
