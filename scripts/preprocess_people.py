@@ -21,10 +21,12 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+import tempfile
 
 import cv2  # type: ignore
 import numpy as np
@@ -182,21 +184,51 @@ def extract_detections(result, frame_width: int, frame_height: int, min_score: f
   return detections
 
 
-def iter_sampled_frames(cap: cv2.VideoCapture, sample_fps: float) -> Iterable[tuple[int, float, np.ndarray]]:
-  fps = cap.get(cv2.CAP_PROP_FPS)
-  if not fps or fps <= 0:
-    fps = 25.0
-  frame_interval = max(1, int(round(fps / sample_fps)))
+def extract_sampled_frames_ffmpeg(
+  video_path: Path,
+  sample_fps: float,
+  start_sec: float,
+  end_sec: float | None,
+) -> list[tuple[Path, float]]:
+  with tempfile.TemporaryDirectory(prefix="tapa_frames_") as temp_dir_raw:
+    temp_dir = Path(temp_dir_raw)
+    frame_pattern = temp_dir / "frame_%06d.jpg"
+    command = [
+      "ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+    ]
+    if start_sec > 0:
+      command.extend(["-ss", f"{start_sec:.3f}"])
+    command.extend(["-i", str(video_path)])
+    if end_sec is not None and end_sec > start_sec:
+      command.extend(["-to", f"{end_sec:.3f}"])
+    command.extend(["-vf", f"fps={sample_fps:.6f}", str(frame_pattern)])
+    subprocess.run(command, check=True)
 
-  frame_index = 0
-  while True:
-    ok, frame = cap.read()
-    if not ok:
-      break
-    if frame_index % frame_interval == 0:
-      ts_sec = frame_index / fps
-      yield frame_index, ts_sec, frame
-    frame_index += 1
+    frame_paths = sorted(temp_dir.glob("frame_*.jpg"))
+    extracted: list[tuple[Path, float]] = []
+    for index, frame_path in enumerate(frame_paths):
+      ts_sec = start_sec + (index / sample_fps)
+      stable_copy = video_path.parent / ".tapa_tmp_frames" / frame_path.name
+      stable_copy.parent.mkdir(parents=True, exist_ok=True)
+      frame_path.replace(stable_copy)
+      extracted.append((stable_copy, ts_sec))
+    return extracted
+
+
+def cleanup_extracted_frames(paths: list[tuple[Path, float]]) -> None:
+  for frame_path, _ in paths:
+    if frame_path.exists():
+      frame_path.unlink(missing_ok=True)
+  temp_dir = paths[0][0].parent if paths else None
+  if temp_dir and temp_dir.exists():
+    try:
+      temp_dir.rmdir()
+    except OSError:
+      pass
 
 
 def write_json(path: Path, rows: list[dict]) -> None:
@@ -265,6 +297,8 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--video-id", required=True, help="videos.id in Supabase")
   parser.add_argument("--model", default="yolov8n-seg.pt", help="Ultralytics segmentation model")
   parser.add_argument("--sample-fps", type=float, default=2.0, help="Sampling FPS for analysis")
+  parser.add_argument("--start-sec", type=float, default=0.0, help="Optional start second")
+  parser.add_argument("--end-sec", type=float, default=-1.0, help="Optional end second")
   parser.add_argument("--min-score", type=float, default=0.35, help="Confidence threshold")
   parser.add_argument("--output-json", default="", help="Optional output json path")
   parser.add_argument("--output-csv", default="", help="Optional output csv path")
@@ -280,20 +314,27 @@ def main() -> None:
   video_path = Path(args.video_path)
   if not video_path.exists():
     raise FileNotFoundError(f"Video not found: {video_path}")
-
-  cap = cv2.VideoCapture(str(video_path))
-  if not cap.isOpened():
-    raise RuntimeError(f"Cannot open video: {video_path}")
+  end_sec = args.end_sec if args.end_sec > 0 else None
+  frame_items = extract_sampled_frames_ffmpeg(
+    video_path=video_path,
+    sample_fps=args.sample_fps,
+    start_sec=max(0.0, args.start_sec),
+    end_sec=end_sec,
+  )
+  if not frame_items:
+    raise RuntimeError("No frames extracted. Check video path and time range.")
 
   model = YOLO(args.model)
   tracker = IoUTracker()
   rows: list[dict] = []
 
   started = time.time()
-  frame_count = 0
+  frame_count = len(frame_items)
   try:
-    for frame_idx, ts_sec, frame in iter_sampled_frames(cap, args.sample_fps):
-      frame_count += 1
+    for frame_index, (frame_path, ts_sec) in enumerate(frame_items, start=1):
+      frame = cv2.imread(str(frame_path))
+      if frame is None:
+        continue
       result = model.predict(frame, verbose=False)[0]
       detections = extract_detections(
         result=result,
@@ -316,10 +357,10 @@ def main() -> None:
             "mask_polygon": det.polygon if args.keep_mask else None,
           }
         )
-      if frame_count % 100 == 0:
-        print(f"Processed sampled frames: {frame_count}, rows={len(rows)}")
+      if frame_index % 100 == 0:
+        print(f"Processed sampled frames: {frame_index}/{frame_count}, rows={len(rows)}")
   finally:
-    cap.release()
+    cleanup_extracted_frames(frame_items)
 
   elapsed = time.time() - started
   print(f"Done. sampled_frames={frame_count}, rows={len(rows)}, elapsed={elapsed:.1f}s")
