@@ -1,7 +1,8 @@
-﻿'use client';
+'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
+import type Plyr from 'plyr';
 import { getSupabaseBrowserClient } from '../lib/supabase-browser';
 import {
   buildMergeClusters,
@@ -324,6 +325,7 @@ export default function Home() {
   const speedButtonRef = useRef<HTMLButtonElement | null>(null);
   const annotationButtonRef = useRef<HTMLButtonElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const playerRef = useRef<Plyr | null>(null);
 
   const selectedVideo = useMemo(
     () => videos.find((video) => video.id === selectedVideoId) ?? null,
@@ -489,18 +491,69 @@ export default function Home() {
     if (videoRef.current) {
       videoRef.current.playbackRate = rate;
     }
+    if (playerRef.current) {
+      playerRef.current.speed = rate;
+    }
     setIsSpeedMenuOpen(false);
   };
 
   const seekBySeconds = (deltaSeconds: number) => {
-    if (!videoRef.current) {
+    if (!videoRef.current && !playerRef.current) {
       return;
     }
     const media = videoRef.current;
-    const duration = Number.isFinite(media.duration) ? media.duration : Number.MAX_SAFE_INTEGER;
-    const next = Math.min(Math.max(media.currentTime + deltaSeconds, 0), duration);
-    media.currentTime = next;
+    const currentTime = playerRef.current?.currentTime ?? media?.currentTime ?? 0;
+    const rawDuration = playerRef.current?.duration ?? media?.duration ?? Number.MAX_SAFE_INTEGER;
+    const duration = Number.isFinite(rawDuration) ? rawDuration : Number.MAX_SAFE_INTEGER;
+    const next = Math.min(Math.max(currentTime + deltaSeconds, 0), duration);
+    if (playerRef.current) {
+      playerRef.current.currentTime = next;
+    } else if (media) {
+      media.currentTime = next;
+    }
   };
+
+  useEffect(() => {
+    const element = videoRef.current;
+    if (!element || !playUrl) {
+      return;
+    }
+    let canceled = false;
+    let localPlayer: Plyr | null = null;
+
+    void import('plyr').then(({ default: PlyrCtor }) => {
+      if (canceled || !videoRef.current) {
+        return;
+      }
+      localPlayer = new PlyrCtor(videoRef.current, {
+        controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'],
+        settings: [],
+        keyboard: { focused: true, global: false },
+        clickToPlay: true,
+      });
+      localPlayer.speed = videoRef.current.playbackRate;
+      playerRef.current = localPlayer;
+    });
+
+    return () => {
+      canceled = true;
+      if (localPlayer) {
+        localPlayer.destroy();
+      }
+      if (playerRef.current === localPlayer) {
+        playerRef.current = null;
+      }
+    };
+  }, [playUrl]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.playbackRate = playbackRate;
+    }
+    if (playerRef.current) {
+      playerRef.current.speed = playbackRate;
+    }
+  }, [playbackRate]);
 
   const openAnnotationPanel = () => {
     const current = videoRef.current?.currentTime ?? 0;
@@ -854,7 +907,7 @@ export default function Home() {
       </header>
 
       <section className='mx-auto w-full max-w-[1800px] px-4 py-3'>
-        <article className='relative overflow-hidden rounded-2xl border border-zinc-200 bg-black shadow-sm'>
+        <article className='tapa-player-shell relative overflow-hidden rounded-2xl border border-zinc-200 bg-black shadow-sm'>
           <div>
             {loadingPlayUrl ? (
               <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center text-sm text-zinc-300'>
@@ -864,14 +917,8 @@ export default function Home() {
               <video
                 ref={videoRef}
                 src={playUrl}
-                controls
                 playsInline
                 preload='metadata'
-                onLoadedMetadata={() => {
-                  if (videoRef.current) {
-                    videoRef.current.playbackRate = playbackRate;
-                  }
-                }}
                 className='h-[calc(100vh-92px)] w-full bg-black'
               />
             ) : (
@@ -881,7 +928,7 @@ export default function Home() {
             )}
           </div>
 
-          <div className='pointer-events-none absolute bottom-[calc(188px+env(safe-area-inset-bottom))] right-5 z-20 flex flex-col items-end gap-2'>
+          <div className='pointer-events-none absolute bottom-[calc(96px+env(safe-area-inset-bottom))] right-5 z-20 flex flex-col items-end gap-2'>
             <div className='pointer-events-auto flex items-center gap-2'>
               <button
                 type='button'

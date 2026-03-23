@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "plyr/dist/plyr.css";
 
 :root {
   --background: #ffffff;
@@ -23,4 +24,28 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.tapa-player-shell .plyr {
+  height: calc(100vh - 92px);
+}
+
+.tapa-player-shell .plyr__video-wrapper,
+.tapa-player-shell .plyr video {
+  height: 100%;
+  width: 100%;
+}
+
+.tapa-player-shell .plyr video {
+  background: #000;
+  object-fit: contain;
+}
+
+.tapa-player-shell .plyr--video .plyr__controls {
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0.44) 48%, rgba(0, 0, 0, 0) 100%);
+  padding-bottom: 16px;
+}
+
+.tapa-player-shell .plyr {
+  --plyr-color-main: #2563eb;
 }
