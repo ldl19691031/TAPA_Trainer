@@ -173,6 +173,8 @@ export default function Home() {
 
   const [isPlayerFullscreen, setIsPlayerFullscreen] = useState(false);
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+  const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
+  const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -382,6 +384,15 @@ export default function Home() {
     if (videoRef.current) {
       videoRef.current.playbackRate = rate;
     }
+    setIsSpeedMenuOpen(false);
+  };
+
+  const openAnnotationPanel = () => {
+    const current = videoRef.current?.currentTime ?? 0;
+    const normalized = normalizeSegment(Math.max(0, current - 2), current + 2);
+    setSegmentStart(normalized.start);
+    setSegmentEnd(normalized.end);
+    setIsAnnotationOpen(true);
   };
 
   const handleAddVideo = async (event: FormEvent) => {
@@ -530,70 +541,56 @@ export default function Home() {
   }
 
   return (
-    <main className='mx-auto min-h-screen w-full max-w-7xl px-4 py-6'>
-      <header className='mb-4 flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 shadow-sm'>
-        <div>
-          <h1 className='text-lg font-semibold text-zinc-900'>Drive behavior trainer</h1>
-          <p className='text-sm text-zinc-600'>User: {session.user.email}</p>
-        </div>
-        <div className='flex items-center gap-2'>
-          <button
-            className='rounded-md border border-zinc-300 px-3 py-2 text-sm hover:bg-zinc-50'
-            type='button'
-            onClick={() => setIsLibraryOpen(true)}
-          >
-            Library
-          </button>
-          <button
-            className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-            onClick={handleSignOut}
-            type='button'
-          >
-            Sign out
-          </button>
+    <main className='min-h-screen bg-zinc-100'>
+      <header className='sticky top-0 z-30 border-b border-zinc-200 bg-white/95 backdrop-blur'>
+        <div className='mx-auto flex h-14 w-full max-w-[1800px] items-center justify-between px-4'>
+          <div className='flex items-center gap-4'>
+            <h1 className='text-sm font-semibold tracking-wide text-zinc-900'>Drive Trainer</h1>
+            <span className='hidden text-xs text-zinc-500 md:inline'>
+              {selectedVideo?.title ?? 'No video selected'}
+            </span>
+          </div>
+          <div className='flex items-center gap-2'>
+            <button
+              className='rounded-md px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100'
+              type='button'
+              onClick={() => void refreshPlayUrl()}
+            >
+              Refresh
+            </button>
+            <button
+              className='rounded-md px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100'
+              type='button'
+              onClick={() => setIsLibraryOpen(true)}
+            >
+              Library
+            </button>
+            <button
+              className='rounded-md px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100'
+              type='button'
+              onClick={() => void togglePlayerFullscreen()}
+            >
+              {isPlayerFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+            </button>
+            <button
+              className='rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50'
+              type='button'
+              onClick={handleSignOut}
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 
-      <section className='grid gap-4 lg:grid-cols-[1.8fr_1fr]'>
-        <article className='rounded-xl border border-zinc-200 bg-white p-4 shadow-sm'>
-          <div className='mb-3 flex flex-wrap items-center justify-between gap-2'>
-            <div>
-              <h2 className='text-base font-semibold text-zinc-900'>
-                {selectedVideo?.title ?? 'No video selected'}
-              </h2>
-              {selectedVideo?.source_url ? (
-                <p className='text-xs text-zinc-500'>
-                  Source:{' '}
-                  <a className='underline' href={selectedVideo.source_url} target='_blank' rel='noreferrer'>
-                    {selectedVideo.source_url}
-                  </a>
-                </p>
-              ) : null}
-            </div>
-            <div className='flex flex-wrap items-center gap-2'>
-              <button
-                className='rounded-md border border-zinc-300 px-3 py-1 text-sm text-zinc-700 hover:bg-zinc-50'
-                type='button'
-                onClick={() => void refreshPlayUrl()}
-              >
-                Refresh URL
-              </button>
-              <button
-                className='rounded-md border border-zinc-300 px-3 py-1 text-sm text-zinc-700 hover:bg-zinc-50'
-                type='button'
-                onClick={() => void togglePlayerFullscreen()}
-              >
-                {isPlayerFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-              </button>
-            </div>
-          </div>
-
+      <section className='mx-auto w-full max-w-[1800px] px-4 py-4'>
+        <article className='relative overflow-hidden rounded-2xl border border-zinc-200 bg-black shadow-sm'>
           <div
             ref={playerContainerRef}
-            className={`overflow-hidden rounded-lg border border-zinc-200 ${isPlayerFullscreen ? 'flex items-center justify-center bg-black p-3' : ''}`}
+            className={`${isPlayerFullscreen ? 'flex items-center justify-center bg-black p-3' : ''}`}
           >
             {loadingPlayUrl ? (
-              <div className='flex h-[480px] w-full items-center justify-center text-sm text-zinc-600'>
+              <div className='flex h-[calc(100vh-120px)] w-full items-center justify-center text-sm text-zinc-300'>
                 Creating signed URL...
               </div>
             ) : playUrl ? (
@@ -608,175 +605,51 @@ export default function Home() {
                     videoRef.current.playbackRate = playbackRate;
                   }
                 }}
-                className={isPlayerFullscreen ? 'h-[75vh] w-[95vw] bg-black' : 'h-[480px] w-full bg-black'}
+                className={isPlayerFullscreen ? 'h-[75vh] w-[95vw] bg-black' : 'h-[calc(100vh-120px)] w-full bg-black'}
               />
             ) : (
-              <div className='flex h-[480px] w-full items-center justify-center text-sm text-zinc-600'>
+              <div className='flex h-[calc(100vh-120px)] w-full items-center justify-center text-sm text-zinc-300'>
                 {playUrlError || 'No playable URL. Open Library and select/add a video.'}
               </div>
             )}
           </div>
 
-          <div className='mt-3 flex flex-wrap items-center gap-2'>
-            <span className='text-sm text-zinc-600'>Speed</span>
-            {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+          <div className='pointer-events-none absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2'>
+            <div className='pointer-events-auto relative'>
               <button
-                key={rate}
                 type='button'
-                onClick={() => setSpeed(rate)}
-                className={`rounded-md px-3 py-1 text-sm ${
-                  playbackRate === rate
-                    ? 'bg-zinc-900 text-white'
-                    : 'border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
-                }`}
+                onClick={() => setIsSpeedMenuOpen((value) => !value)}
+                className='rounded-full bg-white/95 px-4 py-2 text-sm font-medium text-zinc-800 shadow-md hover:bg-white'
               >
-                {rate}x
+                {playbackRate}x
               </button>
-            ))}
-          </div>
-        </article>
-
-        <aside className='space-y-4'>
-          <article className='rounded-xl border border-zinc-200 bg-white p-4 shadow-sm'>
-            <div className='mb-2 flex items-center justify-between gap-2'>
-              <h2 className='text-base font-semibold text-zinc-900'>Annotation</h2>
-              <div className='inline-flex rounded-md border border-zinc-300 p-1'>
-                <button
-                  type='button'
-                  onClick={() => setMode('practice')}
-                  className={`rounded px-2 py-1 text-xs ${mode === 'practice' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}
-                >
-                  Practice
-                </button>
-                <button
-                  type='button'
-                  onClick={() => setMode('supervision')}
-                  className={`rounded px-2 py-1 text-xs ${mode === 'supervision' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}
-                >
-                  Supervision
-                </button>
-              </div>
-            </div>
-
-            <form className='space-y-3' onSubmit={handleSubmitAnnotation}>
-              <div className='grid grid-cols-2 gap-2'>
-                <label className='text-sm text-zinc-700'>
-                  Start
-                  <input
-                    type='number'
-                    min={0}
-                    step={SNAP_STEP_SECONDS}
-                    value={segmentStart}
-                    onChange={(event) => setSegmentStart(Number(event.target.value))}
-                    className='mt-1 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
-                  />
-                </label>
-                <label className='text-sm text-zinc-700'>
-                  End
-                  <input
-                    type='number'
-                    min={0}
-                    step={SNAP_STEP_SECONDS}
-                    value={segmentEnd}
-                    onChange={(event) => setSegmentEnd(Number(event.target.value))}
-                    className='mt-1 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
-                  />
-                </label>
-              </div>
-
-              <div className='grid grid-cols-1 gap-2'>
-                {DRIVE_OPTIONS.map((driver) => {
-                  const active = selectedDrivers.includes(driver.id);
-                  return (
+              {isSpeedMenuOpen ? (
+                <div className='absolute bottom-12 right-0 w-28 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg'>
+                  {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
                     <button
-                      key={driver.id}
+                      key={rate}
                       type='button'
-                      onClick={() => toggleDriver(driver.id)}
-                      className={`group relative rounded-md border px-3 py-2 text-left text-sm transition ${
-                        active ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-zinc-300 text-zinc-800 hover:bg-zinc-50'
+                      onClick={() => setSpeed(rate)}
+                      className={`w-full rounded-md px-2 py-1.5 text-left text-sm ${
+                        playbackRate === rate ? 'bg-zinc-900 text-white' : 'text-zinc-700 hover:bg-zinc-100'
                       }`}
                     >
-                      <span className='font-medium'>{driver.label}</span>
-                      <span className='ml-2 text-xs text-zinc-500'>(hint)</span>
-                      <span className='pointer-events-none absolute left-0 top-full z-10 mt-1 hidden w-full rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-700 shadow-sm group-hover:block'>
-                        {driver.hint}
-                      </span>
+                      {rate}x
                     </button>
-                  );
-                })}
-              </div>
-
-              <label className='flex items-center gap-2 text-sm text-zinc-700'>
-                <input type='checkbox' checked={quickMode} onChange={(event) => setQuickMode(event.target.checked)} />
-                Quick mode
-              </label>
-
-              {!quickMode ? (
-                <label className='text-sm text-zinc-700'>
-                  Comment
-                  <textarea
-                    className='mt-1 h-24 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
-                    maxLength={MAX_COMMENT_LENGTH}
-                    value={comment}
-                    onChange={(event) => setComment(event.target.value)}
-                  />
-                </label>
+                  ))}
+                </div>
               ) : null}
+            </div>
 
-              <button
-                className='w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60'
-                type='submit'
-                disabled={saving || selectedDrivers.length === 0 || !selectedVideoId}
-              >
-                {saving ? 'Saving...' : 'Save annotation'}
-              </button>
-            </form>
-          </article>
-
-          <article className='rounded-xl border border-zinc-200 bg-white p-4 shadow-sm'>
-            <h2 className='mb-2 text-base font-semibold text-zinc-900'>Results</h2>
-            {queryError ? (
-              <p className='mb-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
-                {queryError}
-              </p>
-            ) : null}
-            {loadingAnnotations ? <p className='text-sm text-zinc-600'>Loading annotations...</p> : null}
-
-            {mode === 'supervision' ? (
-              <div className='space-y-2'>
-                {clusters.length === 0 ? (
-                  <p className='text-sm text-zinc-600'>No annotation yet.</p>
-                ) : (
-                  clusters.map((cluster, index) => (
-                    <div key={`${cluster.start_sec}-${cluster.end_sec}-${index}`} className='rounded-md border border-zinc-200 p-3'>
-                      <p className='text-sm font-medium text-zinc-900'>
-                        {formatSeconds(cluster.start_sec)} - {formatSeconds(cluster.end_sec)}
-                      </p>
-                      <p className='text-xs text-zinc-600'>{cluster.annotations.length} annotations</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            ) : (
-              <div className='space-y-2'>
-                {visibleAnnotations.length === 0 ? (
-                  <p className='text-sm text-zinc-600'>You have no annotation yet.</p>
-                ) : (
-                  visibleAnnotations.map((item) => (
-                    <div key={item.id} className='rounded-md border border-zinc-200 p-3'>
-                      <p className='text-sm font-medium text-zinc-900'>
-                        {formatSeconds(item.start_sec)} - {formatSeconds(item.end_sec)}
-                      </p>
-                      <p className='text-xs text-zinc-700'>
-                        {item.drivers.map((driver) => DRIVE_LABEL_MAP[driver] ?? driver).join(', ')}
-                      </p>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </article>
-        </aside>
+            <button
+              type='button'
+              onClick={openAnnotationPanel}
+              className='pointer-events-auto rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-md hover:bg-blue-700'
+            >
+              + Annotation
+            </button>
+          </div>
+        </article>
       </section>
 
       {isLibraryOpen ? (
@@ -840,6 +713,161 @@ export default function Home() {
               </button>
             </form>
           </div>
+        </div>
+      ) : null}
+
+      {isAnnotationOpen ? (
+        <div className='fixed inset-0 z-40 flex items-end justify-end bg-black/30 p-4 md:items-center'>
+          <section className='h-full w-full max-w-xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl md:h-auto md:max-h-[90vh]' role='dialog' aria-modal='true'>
+            <div className='mb-3 flex items-center justify-between'>
+              <h2 className='text-base font-semibold text-zinc-900'>Annotation</h2>
+              <button
+                className='rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-50'
+                onClick={() => setIsAnnotationOpen(false)}
+                type='button'
+              >
+                Close
+              </button>
+            </div>
+
+            <div className='mb-3 inline-flex rounded-md border border-zinc-300 p-1'>
+              <button
+                type='button'
+                onClick={() => setMode('practice')}
+                className={`rounded px-2 py-1 text-xs ${mode === 'practice' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}
+              >
+                Practice
+              </button>
+              <button
+                type='button'
+                onClick={() => setMode('supervision')}
+                className={`rounded px-2 py-1 text-xs ${mode === 'supervision' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}
+              >
+                Supervision
+              </button>
+            </div>
+
+            <form className='space-y-3' onSubmit={handleSubmitAnnotation}>
+              <div className='grid grid-cols-2 gap-2'>
+                <label className='text-sm text-zinc-700'>
+                  Start
+                  <input
+                    type='number'
+                    min={0}
+                    step={SNAP_STEP_SECONDS}
+                    value={segmentStart}
+                    onChange={(event) => setSegmentStart(Number(event.target.value))}
+                    className='mt-1 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
+                  />
+                </label>
+                <label className='text-sm text-zinc-700'>
+                  End
+                  <input
+                    type='number'
+                    min={0}
+                    step={SNAP_STEP_SECONDS}
+                    value={segmentEnd}
+                    onChange={(event) => setSegmentEnd(Number(event.target.value))}
+                    className='mt-1 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
+                  />
+                </label>
+              </div>
+
+              <p className='text-xs text-zinc-500'>
+                Default is current playback time 卤2s, then snapped to {SNAP_STEP_SECONDS}s with min {MIN_SEGMENT_SECONDS}s.
+              </p>
+
+              <div className='grid grid-cols-1 gap-2'>
+                {DRIVE_OPTIONS.map((driver) => {
+                  const active = selectedDrivers.includes(driver.id);
+                  return (
+                    <button
+                      key={driver.id}
+                      type='button'
+                      onClick={() => toggleDriver(driver.id)}
+                      className={`group relative rounded-md border px-3 py-2 text-left text-sm transition ${
+                        active ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-zinc-300 text-zinc-800 hover:bg-zinc-50'
+                      }`}
+                    >
+                      <span className='font-medium'>{driver.label}</span>
+                      <span className='ml-2 text-xs text-zinc-500'>(hint)</span>
+                      <span className='pointer-events-none absolute left-0 top-full z-10 mt-1 hidden w-full rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-700 shadow-sm group-hover:block'>
+                        {driver.hint}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <label className='flex items-center gap-2 text-sm text-zinc-700'>
+                <input type='checkbox' checked={quickMode} onChange={(event) => setQuickMode(event.target.checked)} />
+                Quick mode
+              </label>
+
+              {!quickMode ? (
+                <label className='text-sm text-zinc-700'>
+                  Comment
+                  <textarea
+                    className='mt-1 h-24 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
+                    maxLength={MAX_COMMENT_LENGTH}
+                    value={comment}
+                    onChange={(event) => setComment(event.target.value)}
+                  />
+                </label>
+              ) : null}
+
+              <button
+                className='w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60'
+                type='submit'
+                disabled={saving || selectedDrivers.length === 0 || !selectedVideoId}
+              >
+                {saving ? 'Saving...' : 'Save annotation'}
+              </button>
+            </form>
+
+            <div className='mt-4 border-t border-zinc-200 pt-3'>
+              <h3 className='mb-2 text-sm font-semibold text-zinc-900'>Recent results</h3>
+              {queryError ? (
+                <p className='mb-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
+                  {queryError}
+                </p>
+              ) : null}
+              {loadingAnnotations ? <p className='text-sm text-zinc-600'>Loading annotations...</p> : null}
+              {mode === 'supervision' ? (
+                <div className='space-y-2'>
+                  {clusters.length === 0 ? (
+                    <p className='text-sm text-zinc-600'>No annotation yet.</p>
+                  ) : (
+                    clusters.slice(0, 8).map((cluster, index) => (
+                      <div key={`${cluster.start_sec}-${cluster.end_sec}-${index}`} className='rounded-md border border-zinc-200 p-2'>
+                        <p className='text-xs font-medium text-zinc-900'>
+                          {formatSeconds(cluster.start_sec)} - {formatSeconds(cluster.end_sec)}
+                        </p>
+                        <p className='text-xs text-zinc-600'>{cluster.annotations.length} annotations</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : (
+                <div className='space-y-2'>
+                  {visibleAnnotations.length === 0 ? (
+                    <p className='text-sm text-zinc-600'>You have no annotation yet.</p>
+                  ) : (
+                    visibleAnnotations.slice(0, 8).map((item) => (
+                      <div key={item.id} className='rounded-md border border-zinc-200 p-2'>
+                        <p className='text-xs font-medium text-zinc-900'>
+                          {formatSeconds(item.start_sec)} - {formatSeconds(item.end_sec)}
+                        </p>
+                        <p className='text-xs text-zinc-700'>
+                          {item.drivers.map((driver) => DRIVE_LABEL_MAP[driver] ?? driver).join(', ')}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
         </div>
       ) : null}
     </main>
