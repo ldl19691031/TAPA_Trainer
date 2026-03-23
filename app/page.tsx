@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
@@ -46,12 +46,72 @@ type DriveCue = {
   face: string;
 };
 
+function IconRefresh() {
+  return (
+    <svg viewBox='0 0 24 24' aria-hidden='true' className='h-4 w-4'>
+      <path
+        d='M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5'
+        fill='none'
+        stroke='currentColor'
+        strokeWidth='2'
+        strokeLinecap='round'
+        strokeLinejoin='round'
+      />
+    </svg>
+  );
+}
+
+function IconFolder() {
+  return (
+    <svg viewBox='0 0 24 24' aria-hidden='true' className='h-4 w-4'>
+      <path
+        d='M3 7h6l2 2h10v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z'
+        fill='none'
+        stroke='currentColor'
+        strokeWidth='2'
+        strokeLinecap='round'
+        strokeLinejoin='round'
+      />
+    </svg>
+  );
+}
+
+function IconSignOut() {
+  return (
+    <svg viewBox='0 0 24 24' aria-hidden='true' className='h-4 w-4'>
+      <path
+        d='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9'
+        fill='none'
+        stroke='currentColor'
+        strokeWidth='2'
+        strokeLinecap='round'
+        strokeLinejoin='round'
+      />
+    </svg>
+  );
+}
+
+function IconAnnotation() {
+  return (
+    <svg viewBox='0 0 24 24' aria-hidden='true' className='h-5 w-5'>
+      <path
+        d='M21 11.5a8.5 8.5 0 0 1-8.5 8.5H7l-4 3v-5.5A8.5 8.5 0 1 1 21 11.5zM12 8v7M8.5 11.5h7'
+        fill='none'
+        stroke='currentColor'
+        strokeWidth='2'
+        strokeLinecap='round'
+        strokeLinejoin='round'
+      />
+    </svg>
+  );
+}
+
 const CUE_ROWS: Array<{ key: keyof DriveCue; icon: string }> = [
-  { key: 'lexicon', icon: '鉂? },
-  { key: 'tone', icon: '鈾? },
-  { key: 'gesture', icon: '鉁? },
-  { key: 'posture', icon: '猬? },
-  { key: 'face', icon: '鈼? },
+  { key: 'lexicon', icon: 'L' },
+  { key: 'tone', icon: 'T' },
+  { key: 'gesture', icon: 'G' },
+  { key: 'posture', icon: 'P' },
+  { key: 'face', icon: 'F' },
 ];
 
 const DRIVE_OPTIONS = [
@@ -185,7 +245,7 @@ async function loadVideos(supabase: SupabaseClient): Promise<{ rows: VideoRow[];
     .select('id,title,storage_key,source_url,created_by,created_at')
     .order('created_at', { ascending: false });
   if (error) {
-    return { rows: [], error: 'Cannot read videos table. Please run SQL migration first.' };
+    return { rows: [], error: '无法读取 videos 表，请先执行 SQL migration。' };
   }
   return { rows: (data ?? []) as VideoRow[], error: null };
 }
@@ -200,7 +260,7 @@ async function loadAnnotations(
     .eq('video_id', videoId)
     .order('start_sec', { ascending: true });
   if (error) {
-    return { rows: [], error: `Cannot read annotations table: ${error.message}` };
+    return { rows: [], error: `读取 annotations 表失败：${error.message}` };
   }
   return { rows: (data ?? []) as AnnotationRow[], error: null };
 }
@@ -237,12 +297,11 @@ export default function Home() {
   const [quickMode, setQuickMode] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [isPlayerFullscreen, setIsPlayerFullscreen] = useState(false);
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const selectedVideo = useMemo(
@@ -261,16 +320,6 @@ export default function Home() {
       window.clearInterval(timer);
     };
   }, [magicCooldown]);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsPlayerFullscreen(document.fullscreenElement === playerContainerRef.current);
-    };
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-    };
-  }, []);
 
   useEffect(() => {
     if (!supabase) {
@@ -359,7 +408,7 @@ export default function Home() {
     setLoadingPlayUrl(false);
     if (!response.ok || !payload.url) {
       setPlayUrl('');
-      setPlayUrlError(payload.error ?? 'Failed to create play URL.');
+      setPlayUrlError(payload.error ?? '生成播放链接失败。');
       return;
     }
     setPlayUrl(payload.url);
@@ -380,7 +429,7 @@ export default function Home() {
   const handleSendMagicLink = async (event: FormEvent) => {
     event.preventDefault();
     if (!supabase) {
-      setAuthMessage('Missing Supabase env vars.');
+      setAuthMessage('缺少 Supabase 环境变量。');
       return;
     }
     if (magicCooldown > 0 || authSending) {
@@ -396,12 +445,12 @@ export default function Home() {
       options: { emailRedirectTo: redirectTo },
     });
     if (error) {
-      setAuthMessage(`Failed to send: ${error.message}`);
+      setAuthMessage(`发送失败：${error.message}`);
       setAuthSending(false);
       return;
     }
     setMagicCooldown(30);
-    setAuthMessage('Magic link sent. Please check your inbox.');
+    setAuthMessage('魔法链接已发送，请查收邮箱。');
     setAuthSending(false);
   };
 
@@ -412,18 +461,6 @@ export default function Home() {
     await supabase.auth.signOut();
     setSession(null);
     setAnnotations([]);
-  };
-
-  const togglePlayerFullscreen = async () => {
-    const container = playerContainerRef.current;
-    if (!container) {
-      return;
-    }
-    if (document.fullscreenElement === container) {
-      await document.exitFullscreen();
-      return;
-    }
-    await container.requestFullscreen();
   };
 
   const setSpeed = (rate: number) => {
@@ -450,7 +487,7 @@ export default function Home() {
     const title = videoTitle.trim();
     const storageKey = videoStorageKey.trim();
     if (!title || !storageKey) {
-      setQueryError('Title and storage key are required.');
+      setQueryError('标题和存储 key 必填。');
       return;
     }
     const { data, error } = await supabase
@@ -465,7 +502,7 @@ export default function Home() {
       .select('id,title,storage_key,source_url,created_by,created_at')
       .single();
     if (error) {
-      setQueryError(`Create video failed: ${error.message}`);
+      setQueryError(`创建视频失败：${error.message}`);
       return;
     }
     const row = data as VideoRow;
@@ -500,7 +537,7 @@ export default function Home() {
       return;
     }
     if (selectedDrivers.length === 0) {
-      setQueryError('Select at least one driver.');
+      setQueryError('至少选择一个驱力。');
       return;
     }
     const normalized = normalizeSegment(segmentStart, segmentEnd);
@@ -514,7 +551,7 @@ export default function Home() {
     });
     setSaving(false);
     if (error) {
-      setQueryError(`Save annotation failed: ${error.message}`);
+      setQueryError(`保存标注失败：${error.message}`);
       return;
     }
     setSegmentStart(normalized.start);
@@ -540,18 +577,18 @@ export default function Home() {
   );
 
   if (authLoading) {
-    return <main className='mx-auto flex min-h-screen items-center justify-center'>Loading...</main>;
+    return <main className='mx-auto flex min-h-screen items-center justify-center'>加载中...</main>;
   }
 
   if (!session) {
     return (
       <main className='mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-4 py-10'>
         <section className='w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-sm'>
-          <h1 className='text-xl font-semibold text-zinc-900'>Drive behavior trainer</h1>
-          <p className='mt-2 text-sm text-zinc-600'>Login with magic link. Existing session stays signed in.</p>
+          <h1 className='text-xl font-semibold text-zinc-900'>驱力行为训练</h1>
+          <p className='mt-2 text-sm text-zinc-600'>使用魔法链接登录，已登录会保持会话。</p>
           {!envReady ? (
             <p className='mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
-              Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.
+              缺少 NEXT_PUBLIC_SUPABASE_URL 或 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。
             </p>
           ) : null}
           <form className='mt-4 space-y-3' onSubmit={handleSendMagicLink}>
@@ -568,7 +605,7 @@ export default function Home() {
               type='submit'
               disabled={authSending || magicCooldown > 0}
             >
-              {authSending ? 'Sending...' : magicCooldown > 0 ? `Retry in ${magicCooldown}s` : 'Send magic link'}
+              {authSending ? '发送中...' : magicCooldown > 0 ? `${magicCooldown}s 后重试` : '发送魔法链接'}
             </button>
           </form>
           {authMessage ? <p className='mt-3 text-sm text-zinc-700'>{authMessage}</p> : null}
@@ -581,54 +618,59 @@ export default function Home() {
     <main className='min-h-screen bg-zinc-100'>
       <header className='sticky top-0 z-30 border-b border-zinc-200 bg-white/95 backdrop-blur'>
         <div className='mx-auto flex h-14 w-full max-w-[1800px] items-center justify-between px-4'>
-          <div className='flex items-center gap-4'>
-            <h1 className='text-sm font-semibold tracking-wide text-zinc-900'>Drive Trainer</h1>
-            <span className='hidden text-xs text-zinc-500 md:inline'>
-              {selectedVideo?.title ?? 'No video selected'}
-            </span>
+          <div className='flex min-w-0 items-center gap-3'>
+            <h1 className='whitespace-nowrap text-sm font-semibold tracking-wide text-zinc-900'>驱力训练</h1>
+            <select
+              className='w-[240px] max-w-[52vw] truncate rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-700'
+              value={selectedVideo?.id ?? ''}
+              onChange={(event) => setSelectedVideoId(event.target.value)}
+              title='切换视频'
+            >
+              {videos.length === 0 ? <option value=''>暂无视频</option> : null}
+              {videos.map((video) => (
+                <option key={video.id} value={video.id}>
+                  {video.title}
+                </option>
+              ))}
+            </select>
           </div>
           <div className='flex items-center gap-2'>
             <button
-              className='rounded-md px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100'
+              className='inline-flex items-center justify-center rounded-md px-2 py-2 text-zinc-700 hover:bg-zinc-100'
               type='button'
               onClick={() => void refreshPlayUrl()}
+              title='刷新播放链接'
+              aria-label='刷新播放链接'
             >
-              Refresh
+              <IconRefresh />
             </button>
             <button
-              className='rounded-md px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100'
+              className='inline-flex items-center justify-center rounded-md px-2 py-2 text-zinc-700 hover:bg-zinc-100'
               type='button'
               onClick={() => setIsLibraryOpen(true)}
+              title='视频库'
+              aria-label='视频库'
             >
-              Library
+              <IconFolder />
             </button>
             <button
-              className='rounded-md px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100'
-              type='button'
-              onClick={() => void togglePlayerFullscreen()}
-            >
-              {isPlayerFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-            </button>
-            <button
-              className='rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50'
+              className='inline-flex items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50'
               type='button'
               onClick={handleSignOut}
             >
-              Sign out
+              <IconSignOut />
+              <span className='hidden sm:inline'>退出</span>
             </button>
           </div>
         </div>
       </header>
 
-      <section className='mx-auto w-full max-w-[1800px] px-4 py-4'>
+      <section className='mx-auto w-full max-w-[1800px] px-4 py-3'>
         <article className='relative overflow-hidden rounded-2xl border border-zinc-200 bg-black shadow-sm'>
-          <div
-            ref={playerContainerRef}
-            className={`${isPlayerFullscreen ? 'flex items-center justify-center bg-black p-3' : ''}`}
-          >
+          <div>
             {loadingPlayUrl ? (
-              <div className='flex h-[calc(100vh-120px)] w-full items-center justify-center text-sm text-zinc-300'>
-                Creating signed URL...
+              <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center text-sm text-zinc-300'>
+                正在生成播放链接...
               </div>
             ) : playUrl ? (
               <video
@@ -642,16 +684,16 @@ export default function Home() {
                     videoRef.current.playbackRate = playbackRate;
                   }
                 }}
-                className={isPlayerFullscreen ? 'h-[75vh] w-[95vw] bg-black' : 'h-[calc(100vh-120px)] w-full bg-black'}
+                className='h-[calc(100vh-92px)] w-full bg-black'
               />
             ) : (
-              <div className='flex h-[calc(100vh-120px)] w-full items-center justify-center text-sm text-zinc-300'>
-                {playUrlError || 'No playable URL. Open Library and select/add a video.'}
+              <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center text-sm text-zinc-300'>
+                {playUrlError || '暂无可播放链接，请先在视频库选择或新增视频。'}
               </div>
             )}
           </div>
 
-          <div className='pointer-events-none absolute right-4 z-20 flex flex-col items-end gap-2 bottom-[calc(176px+env(safe-area-inset-bottom))]'>
+          <div className='pointer-events-none absolute bottom-[calc(188px+env(safe-area-inset-bottom))] right-5 z-20 flex flex-col items-end gap-2'>
             <div className='pointer-events-auto relative'>
               <button
                 type='button'
@@ -681,9 +723,10 @@ export default function Home() {
             <button
               type='button'
               onClick={openAnnotationPanel}
-              className='pointer-events-auto rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-md hover:bg-blue-700'
+              className='pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-md hover:bg-blue-700'
             >
-              + Annotation
+              <IconAnnotation />
+              标注
             </button>
           </div>
         </article>
@@ -693,18 +736,18 @@ export default function Home() {
         <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
           <div className='ml-auto h-full w-full max-w-xl overflow-y-auto bg-white p-5 shadow-2xl'>
             <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-lg font-semibold text-zinc-900'>Video Library</h2>
+              <h2 className='text-lg font-semibold text-zinc-900'>视频库</h2>
               <button
                 className='rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-50'
                 onClick={() => setIsLibraryOpen(false)}
                 type='button'
               >
-                Close
+                关闭
               </button>
             </div>
 
             <label className='text-sm text-zinc-700'>
-              Select video
+              选择视频
               <select
                 className='mt-1 w-full rounded-md border border-zinc-300 px-2 py-2 text-sm'
                 value={selectedVideo?.id ?? ''}
@@ -715,7 +758,7 @@ export default function Home() {
               >
                 {videos.map((video) => (
                   <option key={video.id} value={video.id}>
-                    {video.title} [{video.storage_key ?? 'no-key'}]
+                    {video.title} [{video.storage_key ?? '未配置 key'}]
                   </option>
                 ))}
               </select>
@@ -723,30 +766,30 @@ export default function Home() {
 
             <div className='my-4 border-t border-zinc-200' />
 
-            <h3 className='text-base font-semibold text-zinc-900'>Add hosted video</h3>
+            <h3 className='text-base font-semibold text-zinc-900'>新增托管视频</h3>
             <form className='mt-3 grid gap-3' onSubmit={handleAddVideo}>
               <input
                 className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-                placeholder='Title'
+                placeholder='标题'
                 required
                 value={videoTitle}
                 onChange={(event) => setVideoTitle(event.target.value)}
               />
               <input
                 className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-                placeholder='Storage key, e.g. videos/sample-001.mp4'
+                placeholder='存储 key，例如 videos/sample-001.mp4'
                 required
                 value={videoStorageKey}
                 onChange={(event) => setVideoStorageKey(event.target.value)}
               />
               <input
                 className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-                placeholder='Source URL (optional)'
+                placeholder='原始来源 URL（可选）'
                 value={videoSourceUrl}
                 onChange={(event) => setVideoSourceUrl(event.target.value)}
               />
               <button className='rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white' type='submit'>
-                Save video metadata
+                保存视频信息
               </button>
             </form>
           </div>
@@ -757,13 +800,13 @@ export default function Home() {
         <div className='fixed inset-0 z-40 flex items-end justify-end bg-black/30 p-4 md:items-center'>
           <section className='h-full w-full max-w-xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl md:h-auto md:max-h-[90vh]' role='dialog' aria-modal='true'>
             <div className='mb-3 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>Annotation</h2>
+              <h2 className='text-base font-semibold text-zinc-900'>标注</h2>
               <button
                 className='rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-50'
                 onClick={() => setIsAnnotationOpen(false)}
                 type='button'
               >
-                Close
+                关闭
               </button>
             </div>
 
@@ -773,48 +816,19 @@ export default function Home() {
                 onClick={() => setMode('practice')}
                 className={`rounded px-2 py-1 text-xs ${mode === 'practice' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}
               >
-                Practice
+                练习
               </button>
               <button
                 type='button'
                 onClick={() => setMode('supervision')}
                 className={`rounded px-2 py-1 text-xs ${mode === 'supervision' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}
               >
-                Supervision
+                督导
               </button>
             </div>
 
             <form className='space-y-3' onSubmit={handleSubmitAnnotation}>
-              <div className='grid grid-cols-2 gap-2'>
-                <label className='text-sm text-zinc-700'>
-                  Start
-                  <input
-                    type='number'
-                    min={0}
-                    step={SNAP_STEP_SECONDS}
-                    value={segmentStart}
-                    onChange={(event) => setSegmentStart(Number(event.target.value))}
-                    className='mt-1 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
-                  />
-                </label>
-                <label className='text-sm text-zinc-700'>
-                  End
-                  <input
-                    type='number'
-                    min={0}
-                    step={SNAP_STEP_SECONDS}
-                    value={segmentEnd}
-                    onChange={(event) => setSegmentEnd(Number(event.target.value))}
-                    className='mt-1 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
-                  />
-                </label>
-              </div>
-
-              <p className='text-xs text-zinc-500'>
-                Default is current playback time +/- 2s, then snapped to {SNAP_STEP_SECONDS}s with min {MIN_SEGMENT_SECONDS}s.
-              </p>
-
-              <div className='grid grid-cols-1 gap-2'>
+              <div className='flex flex-wrap gap-2'>
                 {DRIVE_OPTIONS.map((driver) => {
                   const active = selectedDrivers.includes(driver.id);
                   return (
@@ -822,18 +836,19 @@ export default function Home() {
                       key={driver.id}
                       type='button'
                       onClick={() => toggleDriver(driver.id)}
-                      className={`group relative rounded-md border px-3 py-2 text-left text-sm transition ${
+                      className={`group relative rounded-full border px-3 py-1.5 text-sm transition ${
                         active ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-zinc-300 text-zinc-800 hover:bg-zinc-50'
                       }`}
                     >
                       <span className='font-medium'>{driver.label}</span>
-                      <span className='ml-2 text-xs text-zinc-500'>(hint)</span>
-                      <span className='pointer-events-none absolute left-0 top-full z-10 mt-1 hidden w-full rounded-lg border border-zinc-200 bg-white p-2 text-xs text-zinc-700 shadow-md group-hover:block'>
-                        <span className='grid gap-1.5'>
+                      <span className='pointer-events-none absolute left-0 top-full z-10 mt-2 hidden w-[360px] max-w-[78vw] rounded-xl border border-zinc-200 bg-white p-2.5 text-xs text-zinc-700 shadow-md group-hover:block'>
+                        <span className='grid gap-2'>
                           {CUE_ROWS.map((row) => (
-                            <span key={row.key} className='grid grid-cols-[18px_1fr] items-start gap-2'>
-                              <span className='mt-[1px] text-[13px] text-zinc-500'>{row.icon}</span>
-                              <span className='leading-5'>{driver.cues[row.key]}</span>
+                            <span key={row.key} className='flex items-start gap-2 rounded-lg bg-zinc-50 px-2 py-1.5'>
+                              <span className='mt-0.5 inline-flex h-5 w-5 flex-none items-center justify-center rounded-full bg-white text-[11px] font-semibold text-zinc-700 shadow-sm'>
+                                {row.icon}
+                              </span>
+                              <span className='leading-5 text-zinc-700'>{driver.cues[row.key]}</span>
                             </span>
                           ))}
                         </span>
@@ -845,12 +860,12 @@ export default function Home() {
 
               <label className='flex items-center gap-2 text-sm text-zinc-700'>
                 <input type='checkbox' checked={quickMode} onChange={(event) => setQuickMode(event.target.checked)} />
-                Quick mode
+                快速模式
               </label>
 
               {!quickMode ? (
                 <label className='text-sm text-zinc-700'>
-                  Comment
+                  评论
                   <textarea
                     className='mt-1 h-24 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
                     maxLength={MAX_COMMENT_LENGTH}
@@ -865,55 +880,92 @@ export default function Home() {
                 type='submit'
                 disabled={saving || selectedDrivers.length === 0 || !selectedVideoId}
               >
-                {saving ? 'Saving...' : 'Save annotation'}
+                {saving ? '保存中...' : '保存标注'}
               </button>
+
+              <details
+                className='rounded-lg border border-zinc-200 bg-zinc-50/80 p-2'
+                open={isDetailsOpen}
+                onToggle={(event) => setIsDetailsOpen(event.currentTarget.open)}
+              >
+                <summary className='cursor-pointer select-none text-sm font-medium text-zinc-700'>
+                  时间与近期标注
+                </summary>
+                <div className='mt-2 space-y-2'>
+                  <div className='grid grid-cols-2 gap-2'>
+                    <label className='text-xs text-zinc-500'>
+                      开始
+                      <input
+                        type='number'
+                        min={0}
+                        step={SNAP_STEP_SECONDS}
+                        value={segmentStart}
+                        onChange={(event) => setSegmentStart(Number(event.target.value))}
+                        className='mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-700'
+                      />
+                    </label>
+                    <label className='text-xs text-zinc-500'>
+                      结束
+                      <input
+                        type='number'
+                        min={0}
+                        step={SNAP_STEP_SECONDS}
+                        value={segmentEnd}
+                        onChange={(event) => setSegmentEnd(Number(event.target.value))}
+                        className='mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-700'
+                      />
+                    </label>
+                  </div>
+                  <p className='text-xs text-zinc-500'>
+                    默认取当前播放时间前后 2 秒，并按 {SNAP_STEP_SECONDS}s 对齐，最短 {MIN_SEGMENT_SECONDS}s。
+                  </p>
+                  {loadingAnnotations ? <p className='text-xs text-zinc-500'>加载标注中...</p> : null}
+                  {mode === 'supervision' ? (
+                    <div className='space-y-1.5'>
+                      {clusters.length === 0 ? (
+                        <p className='text-xs text-zinc-500'>暂无标注。</p>
+                      ) : (
+                        clusters.slice(0, 8).map((cluster, index) => (
+                          <div key={`${cluster.start_sec}-${cluster.end_sec}-${index}`} className='rounded-md border border-zinc-200 bg-white p-2'>
+                            <p className='text-xs font-medium text-zinc-900'>
+                              {formatSeconds(cluster.start_sec)} - {formatSeconds(cluster.end_sec)}
+                            </p>
+                            <p className='text-xs text-zinc-600'>{cluster.annotations.length} 条标注</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  ) : (
+                    <div className='space-y-1.5'>
+                      {visibleAnnotations.length === 0 ? (
+                        <p className='text-xs text-zinc-500'>你还没有标注。</p>
+                      ) : (
+                        visibleAnnotations.slice(0, 8).map((item) => (
+                          <div key={item.id} className='rounded-md border border-zinc-200 bg-white p-2'>
+                            <p className='text-xs font-medium text-zinc-900'>
+                              {formatSeconds(item.start_sec)} - {formatSeconds(item.end_sec)}
+                            </p>
+                            <p className='text-xs text-zinc-700'>
+                              {item.drivers.map((driver) => DRIVE_LABEL_MAP[driver] ?? driver).join('、')}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              </details>
             </form>
 
-            <div className='mt-4 border-t border-zinc-200 pt-3'>
-              <h3 className='mb-2 text-sm font-semibold text-zinc-900'>Recent results</h3>
-              {queryError ? (
-                <p className='mb-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
-                  {queryError}
-                </p>
-              ) : null}
-              {loadingAnnotations ? <p className='text-sm text-zinc-600'>Loading annotations...</p> : null}
-              {mode === 'supervision' ? (
-                <div className='space-y-2'>
-                  {clusters.length === 0 ? (
-                    <p className='text-sm text-zinc-600'>No annotation yet.</p>
-                  ) : (
-                    clusters.slice(0, 8).map((cluster, index) => (
-                      <div key={`${cluster.start_sec}-${cluster.end_sec}-${index}`} className='rounded-md border border-zinc-200 p-2'>
-                        <p className='text-xs font-medium text-zinc-900'>
-                          {formatSeconds(cluster.start_sec)} - {formatSeconds(cluster.end_sec)}
-                        </p>
-                        <p className='text-xs text-zinc-600'>{cluster.annotations.length} annotations</p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              ) : (
-                <div className='space-y-2'>
-                  {visibleAnnotations.length === 0 ? (
-                    <p className='text-sm text-zinc-600'>You have no annotation yet.</p>
-                  ) : (
-                    visibleAnnotations.slice(0, 8).map((item) => (
-                      <div key={item.id} className='rounded-md border border-zinc-200 p-2'>
-                        <p className='text-xs font-medium text-zinc-900'>
-                          {formatSeconds(item.start_sec)} - {formatSeconds(item.end_sec)}
-                        </p>
-                        <p className='text-xs text-zinc-700'>
-                          {item.drivers.map((driver) => DRIVE_LABEL_MAP[driver] ?? driver).join(', ')}
-                        </p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
+            {queryError ? (
+              <p className='mt-3 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
+                {queryError}
+              </p>
+            ) : null}
           </section>
         </div>
       ) : null}
     </main>
   );
 }
+

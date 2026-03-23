@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:encoding": "node scripts/check-encoding.mjs",
+    "test:tips": "node scripts/verify-tips.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1014.0",
