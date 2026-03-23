@@ -1079,7 +1079,6 @@ export default function Home() {
               <video
                 ref={videoRef}
                 src={playUrl}
-                crossOrigin='anonymous'
                 playsInline
                 preload='metadata'
                 onTimeUpdate={(event) => setCurrentVideoTime(event.currentTarget.currentTime)}
