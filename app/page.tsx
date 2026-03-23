@@ -39,21 +39,38 @@ const MERGE_THRESHOLD = 0.5;
 const MAX_COMMENT_LENGTH = 1000;
 const ONBOARDING_STORAGE_KEY = 'tapa_onboarding_seen_v1';
 
-const ONBOARDING_STEPS = [
+type OnboardingTargetId = 'video_select' | 'annotation_button' | 'speed_button';
+
+type OnboardingStep = {
+  title: string;
+  description: string;
+  targetId: OnboardingTargetId;
+  requireAction: boolean;
+  actionHint?: string;
+};
+
+const ONBOARDING_STEPS: OnboardingStep[] = [
   {
     title: '切换视频',
     description:
       '在页面左上角的下拉框切换当前训练视频。切换后会自动刷新对应的标注数据。',
+    targetId: 'video_select',
+    requireAction: true,
+    actionHint: '请先点击一次左上角视频下拉框，再进入下一步。',
   },
   {
     title: '添加标注',
     description:
       '播放器右下角点击“标注”按钮即可打开标注面板，默认会自动填入当前时间前后约 2 秒。',
+    targetId: 'annotation_button',
+    requireAction: false,
   },
   {
     title: '慢放与速度',
     description:
       '播放器右下角的“1x/1.5x”等按钮可调节播放速度，建议在做驱力观察时使用 0.5x 或 0.75x。',
+    targetId: 'speed_button',
+    requireAction: false,
   },
 ] as const;
 
@@ -353,6 +370,22 @@ export default function Home() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
+  const [onboardingCompletedTargets, setOnboardingCompletedTargets] = useState<
+    Partial<Record<OnboardingTargetId, boolean>>
+  >({});
+  const [onboardingHighlightRect, setOnboardingHighlightRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [onboardingCardPosition, setOnboardingCardPosition] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
+  const videoSelectRef = useRef<HTMLSelectElement | null>(null);
+  const speedButtonRef = useRef<HTMLButtonElement | null>(null);
+  const annotationButtonRef = useRef<HTMLButtonElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const selectedVideo = useMemo(
@@ -626,6 +659,39 @@ export default function Home() {
     () => (mode === 'supervision' ? buildMergeClusters(visibleAnnotations) : []),
     [mode, visibleAnnotations],
   );
+  const currentOnboardingStep = ONBOARDING_STEPS[onboardingStepIndex];
+  const isCurrentStepActionDone =
+    !currentOnboardingStep.requireAction ||
+    Boolean(onboardingCompletedTargets[currentOnboardingStep.targetId]);
+
+  const getOnboardingTargetElement = useCallback(
+    (targetId: OnboardingTargetId): HTMLElement | null => {
+      if (targetId === 'video_select') {
+        return videoSelectRef.current;
+      }
+      if (targetId === 'annotation_button') {
+        return annotationButtonRef.current;
+      }
+      if (targetId === 'speed_button') {
+        return speedButtonRef.current;
+      }
+      return null;
+    },
+    [],
+  );
+
+  const markOnboardingAction = (targetId: OnboardingTargetId) => {
+    if (!isOnboardingOpen) {
+      return;
+    }
+    if (currentOnboardingStep.targetId !== targetId) {
+      return;
+    }
+    setOnboardingCompletedTargets((current) => ({
+      ...current,
+      [targetId]: true,
+    }));
+  };
 
   useEffect(() => {
     if (!session) {
@@ -643,6 +709,62 @@ export default function Home() {
     }
   }, [session]);
 
+  useEffect(() => {
+    if (!isOnboardingOpen) {
+      return;
+    }
+
+    const updateOnboardingLayout = () => {
+      const target = getOnboardingTargetElement(currentOnboardingStep.targetId);
+      if (!target) {
+        setOnboardingHighlightRect(null);
+        setOnboardingCardPosition({
+          top: Math.max(24, window.innerHeight / 2 - 140),
+          left: Math.max(16, window.innerWidth / 2 - 220),
+        });
+        return;
+      }
+
+      const rect = target.getBoundingClientRect();
+      const highlight = {
+        top: Math.max(8, rect.top - 6),
+        left: Math.max(8, rect.left - 6),
+        width: rect.width + 12,
+        height: rect.height + 12,
+      };
+      setOnboardingHighlightRect(highlight);
+
+      const cardWidth = Math.min(440, Math.max(320, window.innerWidth - 32));
+      const cardHeight = 270;
+      const margin = 16;
+      let left = Math.min(window.innerWidth - cardWidth - margin, Math.max(margin, rect.left));
+      let top = rect.bottom + 16;
+      if (top + cardHeight > window.innerHeight - margin) {
+        top = Math.max(margin, rect.top - cardHeight - 16);
+      }
+      if (window.innerWidth < 768) {
+        left = margin;
+        top = Math.max(margin, window.innerHeight - cardHeight - margin);
+      }
+      setOnboardingCardPosition({ top, left });
+    };
+
+    updateOnboardingLayout();
+    window.addEventListener('resize', updateOnboardingLayout);
+    window.addEventListener('scroll', updateOnboardingLayout, true);
+    return () => {
+      window.removeEventListener('resize', updateOnboardingLayout);
+      window.removeEventListener('scroll', updateOnboardingLayout, true);
+    };
+  }, [
+    currentOnboardingStep.targetId,
+    getOnboardingTargetElement,
+    isOnboardingOpen,
+    isSpeedMenuOpen,
+    isAnnotationOpen,
+    isLibraryOpen,
+  ]);
+
   const finishOnboarding = (markAsSeen: boolean) => {
     if (markAsSeen) {
       window.localStorage.setItem(ONBOARDING_STORAGE_KEY, '1');
@@ -652,10 +774,14 @@ export default function Home() {
 
   const openOnboarding = () => {
     setOnboardingStepIndex(0);
+    setOnboardingCompletedTargets({});
     setIsOnboardingOpen(true);
   };
 
   const goOnboardingNext = () => {
+    if (!isCurrentStepActionDone) {
+      return;
+    }
     if (onboardingStepIndex >= ONBOARDING_STEPS.length - 1) {
       finishOnboarding(true);
       return;
@@ -712,9 +838,14 @@ export default function Home() {
           <div className='flex min-w-0 items-center gap-3'>
             <h1 className='whitespace-nowrap text-sm font-semibold tracking-wide text-zinc-900'>驱力训练</h1>
             <select
+              ref={videoSelectRef}
               className='w-[240px] max-w-[52vw] truncate rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-700'
               value={selectedVideo?.id ?? ''}
-              onChange={(event) => setSelectedVideoId(event.target.value)}
+              onClick={() => markOnboardingAction('video_select')}
+              onChange={(event) => {
+                markOnboardingAction('video_select');
+                setSelectedVideoId(event.target.value);
+              }}
               title='切换视频'
             >
               {videos.length === 0 ? <option value=''>暂无视频</option> : null}
@@ -796,8 +927,12 @@ export default function Home() {
           <div className='pointer-events-none absolute bottom-[calc(188px+env(safe-area-inset-bottom))] right-5 z-20 flex flex-col items-end gap-2'>
             <div className='pointer-events-auto relative'>
               <button
+                ref={speedButtonRef}
                 type='button'
-                onClick={() => setIsSpeedMenuOpen((value) => !value)}
+                onClick={() => {
+                  markOnboardingAction('speed_button');
+                  setIsSpeedMenuOpen((value) => !value);
+                }}
                 className='rounded-full bg-white/95 px-4 py-2 text-sm font-medium text-zinc-800 shadow-md hover:bg-white'
               >
                 {playbackRate}x
@@ -821,8 +956,12 @@ export default function Home() {
             </div>
 
             <button
+              ref={annotationButtonRef}
               type='button'
-              onClick={openAnnotationPanel}
+              onClick={() => {
+                markOnboardingAction('annotation_button');
+                openAnnotationPanel();
+              }}
               className='pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-md hover:bg-blue-700'
             >
               <IconAnnotation />
@@ -1069,8 +1208,28 @@ export default function Home() {
       ) : null}
 
       {isOnboardingOpen ? (
-        <div className='fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4' role='dialog' aria-modal='true'>
-          <section className='w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl'>
+        <div className='fixed inset-0 z-[120] p-4' role='dialog' aria-modal='true'>
+          {onboardingHighlightRect ? (
+            <div
+              className='pointer-events-none fixed rounded-xl border-2 border-blue-400 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]'
+              style={{
+                top: onboardingHighlightRect.top,
+                left: onboardingHighlightRect.left,
+                width: onboardingHighlightRect.width,
+                height: onboardingHighlightRect.height,
+              }}
+            />
+          ) : (
+            <div className='pointer-events-none fixed inset-0 bg-black/55' />
+          )}
+          <section
+            className='fixed z-[130] w-[min(440px,calc(100vw-32px))] rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl'
+            style={
+              onboardingCardPosition
+                ? { top: onboardingCardPosition.top, left: onboardingCardPosition.left }
+                : undefined
+            }
+          >
             <div className='mb-4 flex items-center justify-between'>
               <h2 className='text-base font-semibold text-zinc-900'>首次使用引导</h2>
               <button
@@ -1087,10 +1246,15 @@ export default function Home() {
             <p className='mb-2 text-xs text-zinc-500'>
               第 {onboardingStepIndex + 1} / {ONBOARDING_STEPS.length} 步
             </p>
-            <h3 className='text-lg font-semibold text-zinc-900'>{ONBOARDING_STEPS[onboardingStepIndex].title}</h3>
+            <h3 className='text-lg font-semibold text-zinc-900'>{currentOnboardingStep.title}</h3>
             <p className='mt-2 text-sm leading-6 text-zinc-700'>
-              {ONBOARDING_STEPS[onboardingStepIndex].description}
+              {currentOnboardingStep.description}
             </p>
+            {currentOnboardingStep.actionHint ? (
+              <p className='mt-2 rounded-md bg-blue-50 px-2 py-1.5 text-xs text-blue-700'>
+                {currentOnboardingStep.actionHint}
+              </p>
+            ) : null}
 
             <div className='mt-5 flex items-center justify-between'>
               <button
@@ -1112,7 +1276,8 @@ export default function Home() {
                 <button
                   type='button'
                   onClick={goOnboardingNext}
-                  className='rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700'
+                  disabled={!isCurrentStepActionDone}
+                  className='rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40'
                 >
                   {onboardingStepIndex === ONBOARDING_STEPS.length - 1 ? '完成' : '下一步'}
                 </button>
