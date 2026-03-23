@@ -39,7 +39,6 @@ type AnnotationRow = {
   person_track_id: number | null;
   person_ts_sec: number | null;
   person_box: NormalizedBox | null;
-  face_box?: NormalizedBox | null;
   created_at: string;
 };
 
@@ -271,29 +270,24 @@ async function loadAnnotations(
   const primary = await supabase
     .from('annotations')
     .select(
-      'id,video_id,user_id,start_sec,end_sec,drivers,comment,person_track_id,person_ts_sec,person_box,face_box,created_at',
+      'id,video_id,user_id,start_sec,end_sec,drivers,comment,person_track_id,person_ts_sec,person_box,created_at',
     )
     .eq('video_id', videoId)
     .order('start_sec', { ascending: true });
   if (!primary.error) {
-    const rows = ((primary.data ?? []) as AnnotationRow[]).map((row) => ({
-      ...row,
-      person_box: row.person_box ?? row.face_box ?? null,
-    }));
-    return { rows, error: null };
+    return { rows: (primary.data ?? []) as AnnotationRow[], error: null };
   }
   if (
     !primary.error.message.includes('person_track_id') &&
     !primary.error.message.includes('person_box') &&
-    !primary.error.message.includes('person_ts_sec') &&
-    !primary.error.message.includes('face_box')
+    !primary.error.message.includes('person_ts_sec')
   ) {
     return { rows: [], error: `读取 annotations 表失败：${primary.error.message}` };
   }
 
   const fallback = await supabase
     .from('annotations')
-    .select('id,video_id,user_id,start_sec,end_sec,drivers,comment,face_box,created_at')
+    .select('id,video_id,user_id,start_sec,end_sec,drivers,comment,created_at')
     .eq('video_id', videoId)
     .order('start_sec', { ascending: true });
   if (fallback.error) {
@@ -303,9 +297,7 @@ async function loadAnnotations(
     ...(row as Omit<AnnotationRow, 'person_track_id' | 'person_ts_sec' | 'person_box'>),
     person_track_id: null,
     person_ts_sec: null,
-    person_box: ((row as { face_box?: NormalizedBox | null }).face_box ?? null) as
-      | NormalizedBox
-      | null,
+    person_box: null,
   }));
   return { rows, error: null };
 }
@@ -815,7 +807,7 @@ export default function Home() {
     () =>
       visibleAnnotations.filter(
         (item) =>
-          (item.person_box ?? item.face_box) &&
+          item.person_box &&
           currentVideoTime >= Number(item.start_sec) &&
           currentVideoTime <= Number(item.end_sec),
       ),
@@ -1087,7 +1079,7 @@ export default function Home() {
           </div>
 
           {activePersonAnnotations.map((item) => {
-            const box = item.person_box ?? item.face_box;
+            const box = item.person_box;
             if (!box) {
               return null;
             }
