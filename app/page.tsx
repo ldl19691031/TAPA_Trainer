@@ -3,6 +3,12 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowserClient } from '../lib/supabase-browser';
+import {
+  buildMergeClusters,
+  formatSeconds,
+  normalizeSegment,
+  type MergeCluster,
+} from '../lib/annotation-utils';
 
 type Mode = 'practice' | 'supervision';
 
@@ -26,18 +32,12 @@ type AnnotationRow = {
   created_at: string;
 };
 
-type MergeCluster = {
-  start_sec: number;
-  end_sec: number;
-  annotations: AnnotationRow[];
-  driverCount: Record<string, number>;
-};
-
 const MIN_SEGMENT_SECONDS = 2;
 const SNAP_STEP_SECONDS = 0.5;
 const MERGE_THRESHOLD = 0.5;
 const MAX_COMMENT_LENGTH = 1000;
 const ONBOARDING_STORAGE_KEY = 'tapa_onboarding_seen_v1';
+const PLAYBACK_RATE_OPTIONS = [0.2, 0.3, 0.5, 0.75, 1] as const;
 
 type OnboardingTargetId = 'video_select' | 'annotation_button' | 'speed_button';
 
@@ -68,7 +68,7 @@ const ONBOARDING_STEPS: OnboardingStep[] = [
   {
     title: '慢放与速度',
     description:
-      '播放器右下角的“1x/1.5x”等按钮可调节播放速度，建议在做驱力观察时使用 0.5x 或 0.75x。',
+      '播放器右下角的速度按钮可调节播放速度，支持 0.2x、0.3x、0.5x、0.75x 和 1x。',
     targetId: 'speed_button',
     requireAction: false,
   },
@@ -241,69 +241,6 @@ const DRIVE_OPTIONS = [
 const DRIVE_LABEL_MAP = Object.fromEntries(
   DRIVE_OPTIONS.map((item) => [item.id, item.label]),
 ) as Record<string, string>;
-
-function snapToStep(value: number, step: number): number {
-  return Math.round(value / step) * step;
-}
-
-function normalizeSegment(start: number, end: number): { start: number; end: number } {
-  const snappedStart = Math.max(0, snapToStep(start, SNAP_STEP_SECONDS));
-  const snappedEnd = Math.max(0, snapToStep(end, SNAP_STEP_SECONDS));
-  const adjustedEnd =
-    snappedEnd - snappedStart >= MIN_SEGMENT_SECONDS
-      ? snappedEnd
-      : snapToStep(snappedStart + MIN_SEGMENT_SECONDS, SNAP_STEP_SECONDS);
-  return { start: snappedStart, end: adjustedEnd };
-}
-
-function overlapRatio(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
-  const overlap = Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
-  if (overlap <= 0) {
-    return 0;
-  }
-  const base = Math.max(0.0001, Math.min(aEnd - aStart, bEnd - bStart));
-  return overlap / base;
-}
-
-function buildMergeClusters(rows: AnnotationRow[]): MergeCluster[] {
-  const sorted = [...rows].sort((a, b) => a.start_sec - b.start_sec);
-  const clusters: MergeCluster[] = [];
-  for (const row of sorted) {
-    const match = clusters.find((cluster) => {
-      return (
-        overlapRatio(row.start_sec, row.end_sec, cluster.start_sec, cluster.end_sec) >=
-        MERGE_THRESHOLD
-      );
-    });
-    if (!match) {
-      const driverCount: Record<string, number> = {};
-      for (const driver of row.drivers) {
-        driverCount[driver] = (driverCount[driver] ?? 0) + 1;
-      }
-      clusters.push({
-        start_sec: row.start_sec,
-        end_sec: row.end_sec,
-        annotations: [row],
-        driverCount,
-      });
-      continue;
-    }
-    match.start_sec = Math.min(match.start_sec, row.start_sec);
-    match.end_sec = Math.max(match.end_sec, row.end_sec);
-    match.annotations.push(row);
-    for (const driver of row.drivers) {
-      match.driverCount[driver] = (match.driverCount[driver] ?? 0) + 1;
-    }
-  }
-  return clusters.sort((a, b) => a.start_sec - b.start_sec);
-}
-
-function formatSeconds(value: number): string {
-  const minutes = Math.floor(value / 60);
-  const seconds = Math.floor(value % 60);
-  const tenths = Math.round((value - Math.floor(value)) * 10);
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`;
-}
 
 async function loadVideos(supabase: SupabaseClient): Promise<{ rows: VideoRow[]; error: string | null }> {
   const { data, error } = await supabase
@@ -555,9 +492,24 @@ export default function Home() {
     setIsSpeedMenuOpen(false);
   };
 
+  const seekBySeconds = (deltaSeconds: number) => {
+    if (!videoRef.current) {
+      return;
+    }
+    const media = videoRef.current;
+    const duration = Number.isFinite(media.duration) ? media.duration : Number.MAX_SAFE_INTEGER;
+    const next = Math.min(Math.max(media.currentTime + deltaSeconds, 0), duration);
+    media.currentTime = next;
+  };
+
   const openAnnotationPanel = () => {
     const current = videoRef.current?.currentTime ?? 0;
-    const normalized = normalizeSegment(Math.max(0, current - 2), current + 2);
+    const normalized = normalizeSegment(
+      Math.max(0, current - 2),
+      current + 2,
+      SNAP_STEP_SECONDS,
+      MIN_SEGMENT_SECONDS,
+    );
     setSegmentStart(normalized.start);
     setSegmentEnd(normalized.end);
     setIsAnnotationOpen(true);
@@ -624,7 +576,12 @@ export default function Home() {
       setQueryError('至少选择一个驱力。');
       return;
     }
-    const normalized = normalizeSegment(segmentStart, segmentEnd);
+    const normalized = normalizeSegment(
+      segmentStart,
+      segmentEnd,
+      SNAP_STEP_SECONDS,
+      MIN_SEGMENT_SECONDS,
+    );
     setSaving(true);
     const { error } = await supabase.from('annotations').insert({
       video_id: selectedVideo.id,
@@ -655,8 +612,8 @@ export default function Home() {
       : annotations;
   }, [annotations, mode, session]);
 
-  const clusters = useMemo(
-    () => (mode === 'supervision' ? buildMergeClusters(visibleAnnotations) : []),
+  const clusters = useMemo<MergeCluster<AnnotationRow>[]>(
+    () => (mode === 'supervision' ? buildMergeClusters(visibleAnnotations, MERGE_THRESHOLD) : []),
     [mode, visibleAnnotations],
   );
   const currentOnboardingStep = ONBOARDING_STEPS[onboardingStepIndex];
@@ -925,6 +882,26 @@ export default function Home() {
           </div>
 
           <div className='pointer-events-none absolute bottom-[calc(188px+env(safe-area-inset-bottom))] right-5 z-20 flex flex-col items-end gap-2'>
+            <div className='pointer-events-auto flex items-center gap-2'>
+              <button
+                type='button'
+                onClick={() => seekBySeconds(-3)}
+                className='rounded-full bg-white/95 px-3 py-2 text-xs font-medium text-zinc-800 shadow-md hover:bg-white'
+                title='后退 3 秒'
+                aria-label='后退 3 秒'
+              >
+                -3s
+              </button>
+              <button
+                type='button'
+                onClick={() => seekBySeconds(3)}
+                className='rounded-full bg-white/95 px-3 py-2 text-xs font-medium text-zinc-800 shadow-md hover:bg-white'
+                title='前进 3 秒'
+                aria-label='前进 3 秒'
+              >
+                +3s
+              </button>
+            </div>
             <div className='pointer-events-auto relative'>
               <button
                 ref={speedButtonRef}
@@ -939,7 +916,7 @@ export default function Home() {
               </button>
               {isSpeedMenuOpen ? (
                 <div className='absolute bottom-12 right-0 w-28 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg'>
-                  {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                  {PLAYBACK_RATE_OPTIONS.map((rate) => (
                     <button
                       key={rate}
                       type='button'
