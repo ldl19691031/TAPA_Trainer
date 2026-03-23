@@ -75,7 +75,7 @@ const DEFAULT_BILIBILI_EMBED =
   'https://player.bilibili.com/player.html?isOutside=true&aid=114897304228587&bvid=BV1UEgWz9EBE&cid=31212832462&p=1';
 
 const defaultVideo: VideoRow = {
-  id: 'sample-bilibili',
+  id: '00000000-0000-0000-0000-000000000001',
   title: 'Starter sample (Bilibili)',
   provider: 'bilibili',
   embed_url: DEFAULT_BILIBILI_EMBED,
