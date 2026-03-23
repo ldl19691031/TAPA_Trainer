@@ -614,7 +614,7 @@ export default function Home() {
             )}
           </div>
 
-          <div className='pointer-events-none absolute bottom-[86px] right-4 z-20 flex flex-col items-end gap-2 md:bottom-[94px]'>
+          <div className='pointer-events-none absolute right-4 z-20 flex flex-col items-end gap-2 bottom-[calc(132px+env(safe-area-inset-bottom))]'>
             <div className='pointer-events-auto relative'>
               <button
                 type='button'
