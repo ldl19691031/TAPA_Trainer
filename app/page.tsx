@@ -238,7 +238,7 @@ export default function Home() {
   const envReady = Boolean(supabase);
 
   const [session, setSession] = useState<Session | null>(null);
-  const [authLoading, setAuthLoading] = useState(envReady);
+  const [authLoading, setAuthLoading] = useState(true);
   const [email, setEmail] = useState('');
   const [authMessage, setAuthMessage] = useState('');
 
@@ -266,6 +266,13 @@ export default function Home() {
 
   useEffect(() => {
     if (!supabase) {
+      const timer = window.setTimeout(() => setAuthLoading(false), 0);
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+
+    if (!envReady) {
       return;
     }
 
@@ -289,7 +296,7 @@ export default function Home() {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [envReady, supabase]);
 
   useEffect(() => {
     if (!supabase || !session) {
