@@ -280,15 +280,31 @@ async function loadAnnotations(
   supabase: SupabaseClient,
   videoId: string,
 ): Promise<{ rows: AnnotationRow[]; error: string | null }> {
-  const { data, error } = await supabase
+  const primary = await supabase
     .from('annotations')
     .select('id,video_id,user_id,start_sec,end_sec,drivers,comment,face_box,created_at')
     .eq('video_id', videoId)
     .order('start_sec', { ascending: true });
-  if (error) {
-    return { rows: [], error: `读取 annotations 表失败：${error.message}` };
+  if (!primary.error) {
+    return { rows: (primary.data ?? []) as AnnotationRow[], error: null };
   }
-  return { rows: (data ?? []) as AnnotationRow[], error: null };
+  if (!primary.error.message.includes('face_box')) {
+    return { rows: [], error: `读取 annotations 表失败：${primary.error.message}` };
+  }
+
+  const fallback = await supabase
+    .from('annotations')
+    .select('id,video_id,user_id,start_sec,end_sec,drivers,comment,created_at')
+    .eq('video_id', videoId)
+    .order('start_sec', { ascending: true });
+  if (fallback.error) {
+    return { rows: [], error: `读取 annotations 表失败：${fallback.error.message}` };
+  }
+  const rows = (fallback.data ?? []).map((row) => ({
+    ...(row as Omit<AnnotationRow, 'face_box'>),
+    face_box: null,
+  }));
+  return { rows, error: null };
 }
 
 export default function Home() {
@@ -664,7 +680,10 @@ export default function Home() {
       setDetectedFaces([]);
       setSelectedFaceIndex(null);
       setFacePreviewDataUrl('');
-      setFaceDetectMessage(`人脸检测失败：${message}`);
+      const corsHint = message.includes('tainted canvases')
+        ? '人脸检测失败：当前视频源未允许跨域 Canvas 读取，请检查 R2 CORS 并确认允许来源域名。'
+        : `人脸检测失败：${message}`;
+      setFaceDetectMessage(corsHint);
     } finally {
       setIsDetectingFaces(false);
     }
@@ -1060,6 +1079,7 @@ export default function Home() {
               <video
                 ref={videoRef}
                 src={playUrl}
+                crossOrigin='anonymous'
                 playsInline
                 preload='metadata'
                 onTimeUpdate={(event) => setCurrentVideoTime(event.currentTarget.currentTime)}
