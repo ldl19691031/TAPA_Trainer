@@ -1,17 +1,16 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowserClient } from '../lib/supabase-browser';
 
 type Mode = 'practice' | 'supervision';
-type VideoProvider = 'youtube' | 'bilibili';
 
 type VideoRow = {
   id: string;
   title: string;
-  provider: VideoProvider;
-  embed_url: string;
+  storage_key: string | null;
+  source_url: string | null;
   created_by: string;
   created_at: string;
 };
@@ -40,48 +39,16 @@ const MERGE_THRESHOLD = 0.5;
 const MAX_COMMENT_LENGTH = 1000;
 
 const DRIVE_OPTIONS = [
-  {
-    id: 'be_perfect',
-    label: '\u8981\u5b8c\u7f8e',
-    hint: 'Placeholder: high standards, repeated edits, fear of mistakes.',
-  },
-  {
-    id: 'be_strong',
-    label: '\u8981\u575a\u5f3a',
-    hint: 'Placeholder: suppressing vulnerability, carrying alone.',
-  },
-  {
-    id: 'try_hard',
-    label: '\u8981\u52aa\u529b\u8bd5',
-    hint: 'Placeholder: continuous effort with less focus.',
-  },
-  {
-    id: 'hurry_up',
-    label: '\u8981\u8fc5\u901f',
-    hint: 'Placeholder: fast pace, interruption, rushed transitions.',
-  },
-  {
-    id: 'please_others',
-    label: '\u8981\u8ba8\u597d',
-    hint: 'Placeholder: pleasing others, avoiding conflict, seeking approval.',
-  },
+  { id: 'be_perfect', label: '\u8981\u5b8c\u7f8e', hint: 'Placeholder: high standards, repeated edits, fear of mistakes.' },
+  { id: 'be_strong', label: '\u8981\u575a\u5f3a', hint: 'Placeholder: suppressing vulnerability, carrying alone.' },
+  { id: 'try_hard', label: '\u8981\u52aa\u529b\u8bd5', hint: 'Placeholder: continuous effort with less focus.' },
+  { id: 'hurry_up', label: '\u8981\u8fc5\u901f', hint: 'Placeholder: fast pace, interruption, rushed transitions.' },
+  { id: 'please_others', label: '\u8981\u8ba8\u597d', hint: 'Placeholder: pleasing others, avoiding conflict, seeking approval.' },
 ] as const;
 
 const DRIVE_LABEL_MAP = Object.fromEntries(
   DRIVE_OPTIONS.map((item) => [item.id, item.label]),
 ) as Record<string, string>;
-
-const DEFAULT_BILIBILI_EMBED =
-  'https://player.bilibili.com/player.html?isOutside=true&aid=114897304228587&bvid=BV1UEgWz9EBE&cid=31212832462&p=1';
-
-const defaultVideo: VideoRow = {
-  id: '00000000-0000-0000-0000-000000000001',
-  title: 'Starter sample (Bilibili)',
-  provider: 'bilibili',
-  embed_url: DEFAULT_BILIBILI_EMBED,
-  created_by: 'system',
-  created_at: '1970-01-01T00:00:00.000Z',
-};
 
 function snapToStep(value: number, step: number): number {
   return Math.round(value / step) * step;
@@ -109,14 +76,13 @@ function overlapRatio(aStart: number, aEnd: number, bStart: number, bEnd: number
 function buildMergeClusters(rows: AnnotationRow[]): MergeCluster[] {
   const sorted = [...rows].sort((a, b) => a.start_sec - b.start_sec);
   const clusters: MergeCluster[] = [];
-
   for (const row of sorted) {
     const match = clusters.find((cluster) => {
       return (
-        overlapRatio(row.start_sec, row.end_sec, cluster.start_sec, cluster.end_sec) >= MERGE_THRESHOLD
+        overlapRatio(row.start_sec, row.end_sec, cluster.start_sec, cluster.end_sec) >=
+        MERGE_THRESHOLD
       );
     });
-
     if (!match) {
       const driverCount: Record<string, number> = {};
       for (const driver of row.drivers) {
@@ -130,7 +96,6 @@ function buildMergeClusters(rows: AnnotationRow[]): MergeCluster[] {
       });
       continue;
     }
-
     match.start_sec = Math.min(match.start_sec, row.start_sec);
     match.end_sec = Math.max(match.end_sec, row.end_sec);
     match.annotations.push(row);
@@ -138,7 +103,6 @@ function buildMergeClusters(rows: AnnotationRow[]): MergeCluster[] {
       match.driverCount[driver] = (match.driverCount[driver] ?? 0) + 1;
     }
   }
-
   return clusters.sort((a, b) => a.start_sec - b.start_sec);
 }
 
@@ -149,71 +113,15 @@ function formatSeconds(value: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`;
 }
 
-function parseVideoInput(input: string): { provider: VideoProvider; embedUrl: string } | null {
-  const trimmed = input.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const iframeMatch = trimmed.match(/src=['"]([^'"]+)['"]/i);
-  const extracted = iframeMatch ? iframeMatch[1] : trimmed;
-  const maybeProtocolLess = extracted.startsWith('//') ? `https:${extracted}` : extracted;
-
-  if (maybeProtocolLess.includes('player.bilibili.com/player.html')) {
-    return { provider: 'bilibili', embedUrl: maybeProtocolLess };
-  }
-
-  const bvidMatch = maybeProtocolLess.match(/BV[0-9A-Za-z]+/);
-  if (bvidMatch) {
-    return {
-      provider: 'bilibili',
-      embedUrl: `https://player.bilibili.com/player.html?isOutside=true&bvid=${bvidMatch[0]}&p=1`,
-    };
-  }
-
-  try {
-    const url = new URL(maybeProtocolLess);
-    const host = url.hostname.replace(/^www\./, '');
-
-    if (host === 'youtu.be') {
-      const id = url.pathname.replace('/', '');
-      if (id) {
-        return { provider: 'youtube', embedUrl: `https://www.youtube.com/embed/${id}` };
-      }
-    }
-
-    if (host === 'youtube.com' || host === 'm.youtube.com') {
-      const id = url.searchParams.get('v');
-      if (id) {
-        return { provider: 'youtube', embedUrl: `https://www.youtube.com/embed/${id}` };
-      }
-      const shortsMatch = url.pathname.match(/\/shorts\/([^/]+)/);
-      if (shortsMatch?.[1]) {
-        return { provider: 'youtube', embedUrl: `https://www.youtube.com/embed/${shortsMatch[1]}` };
-      }
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
 async function loadVideos(supabase: SupabaseClient): Promise<{ rows: VideoRow[]; error: string | null }> {
   const { data, error } = await supabase
     .from('videos')
-    .select('id,title,provider,embed_url,created_by,created_at')
+    .select('id,title,storage_key,source_url,created_by,created_at')
     .order('created_at', { ascending: false });
-
   if (error) {
-    return { rows: [defaultVideo], error: 'Cannot read videos table. Please run SQL setup first.' };
+    return { rows: [], error: 'Cannot read videos table. Please run SQL migration first.' };
   }
-
-  const rows = (data ?? []) as VideoRow[];
-  if (rows.length === 0) {
-    return { rows: [defaultVideo], error: null };
-  }
-  return { rows, error: null };
+  return { rows: (data ?? []) as VideoRow[], error: null };
 }
 
 async function loadAnnotations(
@@ -225,11 +133,9 @@ async function loadAnnotations(
     .select('id,video_id,user_id,start_sec,end_sec,drivers,comment,created_at')
     .eq('video_id', videoId)
     .order('start_sec', { ascending: true });
-
   if (error) {
-    return { rows: [], error: 'Cannot read annotations table. Please run SQL setup first.' };
+    return { rows: [], error: `Cannot read annotations table: ${error.message}` };
   }
-
   return { rows: (data ?? []) as AnnotationRow[], error: null };
 }
 
@@ -244,10 +150,14 @@ export default function Home() {
   const [authSending, setAuthSending] = useState(false);
   const [magicCooldown, setMagicCooldown] = useState(0);
 
-  const [videos, setVideos] = useState<VideoRow[]>([defaultVideo]);
-  const [selectedVideoId, setSelectedVideoId] = useState(defaultVideo.id);
+  const [videos, setVideos] = useState<VideoRow[]>([]);
+  const [selectedVideoId, setSelectedVideoId] = useState('');
   const [videoTitle, setVideoTitle] = useState('');
-  const [videoInput, setVideoInput] = useState(DEFAULT_BILIBILI_EMBED);
+  const [videoStorageKey, setVideoStorageKey] = useState('');
+  const [videoSourceUrl, setVideoSourceUrl] = useState('');
+  const [playUrl, setPlayUrl] = useState('');
+  const [loadingPlayUrl, setLoadingPlayUrl] = useState(false);
+  const [playUrlError, setPlayUrlError] = useState('');
 
   const [mode, setMode] = useState<Mode>('practice');
   const [annotations, setAnnotations] = useState<AnnotationRow[]>([]);
@@ -260,95 +170,14 @@ export default function Home() {
   const [comment, setComment] = useState('');
   const [quickMode, setQuickMode] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [isPlayerFullscreen, setIsPlayerFullscreen] = useState(false);
 
+  const [isPlayerFullscreen, setIsPlayerFullscreen] = useState(false);
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
 
   const selectedVideo = useMemo(
-    () => videos.find((video) => video.id === selectedVideoId) ?? videos[0],
+    () => videos.find((video) => video.id === selectedVideoId) ?? null,
     [selectedVideoId, videos],
   );
-
-  useEffect(() => {
-    if (!supabase) {
-      const timer = window.setTimeout(() => setAuthLoading(false), 0);
-      return () => {
-        window.clearTimeout(timer);
-      };
-    }
-
-    if (!envReady) {
-      return;
-    }
-
-    let mounted = true;
-    const init = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (mounted) {
-        setSession(data.session);
-        setAuthLoading(false);
-      }
-    };
-    void init();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-    });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, [envReady, supabase]);
-
-  useEffect(() => {
-    if (!supabase || !session) {
-      return;
-    }
-
-    let active = true;
-    const run = async () => {
-      const result = await loadVideos(supabase);
-      if (!active) {
-        return;
-      }
-      setQueryError(result.error ?? '');
-      setVideos(result.rows);
-      setSelectedVideoId((current) =>
-        result.rows.some((item) => item.id === current) ? current : result.rows[0].id,
-      );
-    };
-    void run();
-
-    return () => {
-      active = false;
-    };
-  }, [session, supabase]);
-
-  useEffect(() => {
-    if (!supabase || !session || !selectedVideoId) {
-      return;
-    }
-
-    let active = true;
-    const run = async () => {
-      setLoadingAnnotations(true);
-      const result = await loadAnnotations(supabase, selectedVideoId);
-      if (!active) {
-        return;
-      }
-      setLoadingAnnotations(false);
-      setQueryError(result.error ?? '');
-      setAnnotations(result.rows);
-    };
-    void run();
-
-    return () => {
-      active = false;
-    };
-  }, [selectedVideoId, session, supabase]);
 
   useEffect(() => {
     if (magicCooldown <= 0) {
@@ -372,6 +201,111 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!supabase) {
+      const timer = window.setTimeout(() => setAuthLoading(false), 0);
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+
+    let mounted = true;
+    const init = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (mounted) {
+        setSession(data.session);
+        setAuthLoading(false);
+      }
+    };
+    void init();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  useEffect(() => {
+    if (!supabase || !session) {
+      return;
+    }
+    let active = true;
+    const run = async () => {
+      const result = await loadVideos(supabase);
+      if (!active) {
+        return;
+      }
+      setQueryError(result.error ?? '');
+      setVideos(result.rows);
+      setSelectedVideoId((current) =>
+        result.rows.some((item) => item.id === current) ? current : result.rows[0]?.id ?? '',
+      );
+    };
+    void run();
+    return () => {
+      active = false;
+    };
+  }, [session, supabase]);
+
+  useEffect(() => {
+    if (!supabase || !session || !selectedVideoId) {
+      return;
+    }
+    let active = true;
+    const run = async () => {
+      setLoadingAnnotations(true);
+      const result = await loadAnnotations(supabase, selectedVideoId);
+      if (!active) {
+        return;
+      }
+      setLoadingAnnotations(false);
+      setQueryError(result.error ?? '');
+      setAnnotations(result.rows);
+    };
+    void run();
+    return () => {
+      active = false;
+    };
+  }, [selectedVideoId, session, supabase]);
+
+  const refreshPlayUrl = useCallback(async () => {
+    if (!session || !selectedVideoId) {
+      return;
+    }
+    setLoadingPlayUrl(true);
+    setPlayUrlError('');
+    const response = await fetch(`/api/videos/${selectedVideoId}/play-url`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      cache: 'no-store',
+    });
+    const payload = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+    setLoadingPlayUrl(false);
+    if (!response.ok || !payload.url) {
+      setPlayUrl('');
+      setPlayUrlError(payload.error ?? 'Failed to create play URL.');
+      return;
+    }
+    setPlayUrl(payload.url);
+  }, [selectedVideoId, session]);
+
+  useEffect(() => {
+    if (!session || !selectedVideoId) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void refreshPlayUrl();
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [refreshPlayUrl, selectedVideoId, session]);
+
   const handleSendMagicLink = async (event: FormEvent) => {
     event.preventDefault();
     if (!supabase) {
@@ -383,22 +317,18 @@ export default function Home() {
     }
     setAuthMessage('');
     setAuthSending(true);
-
     const redirectTo =
       process.env.NEXT_PUBLIC_SITE_URL ||
       (typeof window !== 'undefined' ? window.location.origin : undefined);
-
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
       options: { emailRedirectTo: redirectTo },
     });
-
     if (error) {
       setAuthMessage(`Failed to send: ${error.message}`);
       setAuthSending(false);
       return;
     }
-
     setMagicCooldown(30);
     setAuthMessage('Magic link sent. Please check your inbox.');
     setAuthSending(false);
@@ -413,12 +343,10 @@ export default function Home() {
     const redirectTo =
       process.env.NEXT_PUBLIC_SITE_URL ||
       (typeof window !== 'undefined' ? window.location.origin : undefined);
-
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo },
     });
-
     if (error) {
       setAuthMessage(`Google sign-in failed: ${error.message}`);
       setAuthSending(false);
@@ -439,7 +367,6 @@ export default function Home() {
     if (!container) {
       return;
     }
-
     if (document.fullscreenElement === container) {
       await document.exitFullscreen();
       return;
@@ -452,29 +379,33 @@ export default function Home() {
     if (!supabase || !session) {
       return;
     }
-
-    const parsed = parseVideoInput(videoInput);
-    if (!parsed) {
-      setQueryError('Unsupported URL. Only YouTube/Bilibili are allowed.');
+    const title = videoTitle.trim();
+    const storageKey = videoStorageKey.trim();
+    if (!title || !storageKey) {
+      setQueryError('Title and storage key are required.');
       return;
     }
-
-    const title = videoTitle.trim() || 'Untitled video';
     const { data, error } = await supabase
       .from('videos')
-      .insert({ title, provider: parsed.provider, embed_url: parsed.embedUrl })
-      .select('id,title,provider,embed_url,created_by,created_at')
+      .insert({
+        title,
+        storage_key: storageKey,
+        source_url: videoSourceUrl.trim() || null,
+        provider: 'youtube',
+        embed_url: '',
+      })
+      .select('id,title,storage_key,source_url,created_by,created_at')
       .single();
-
     if (error) {
       setQueryError(`Create video failed: ${error.message}`);
       return;
     }
-
     const row = data as VideoRow;
     setVideos((current) => [row, ...current.filter((item) => item.id !== row.id)]);
     setSelectedVideoId(row.id);
     setVideoTitle('');
+    setVideoStorageKey('');
+    setVideoSourceUrl('');
     setQueryError('');
   };
 
@@ -504,9 +435,7 @@ export default function Home() {
       setQueryError('Select at least one driver.');
       return;
     }
-
     const normalized = normalizeSegment(segmentStart, segmentEnd);
-
     setSaving(true);
     const { error } = await supabase.from('annotations').insert({
       video_id: selectedVideo.id,
@@ -516,12 +445,10 @@ export default function Home() {
       comment: quickMode ? null : comment.trim() || null,
     });
     setSaving(false);
-
     if (error) {
       setQueryError(`Save annotation failed: ${error.message}`);
       return;
     }
-
     setSegmentStart(normalized.start);
     setSegmentEnd(normalized.end + MIN_SEGMENT_SECONDS);
     setSelectedDrivers([]);
@@ -554,7 +481,7 @@ export default function Home() {
         <section className='w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-sm'>
           <h1 className='text-xl font-semibold text-zinc-900'>Drive behavior trainer</h1>
           <p className='mt-2 text-sm text-zinc-600'>
-            Login with magic link or Google. Existing session will stay signed in.
+            Login with magic link or Google. Existing session stays signed in.
           </p>
           {!envReady ? (
             <p className='mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
@@ -575,11 +502,7 @@ export default function Home() {
               type='submit'
               disabled={authSending || magicCooldown > 0}
             >
-              {authSending
-                ? 'Sending...'
-                : magicCooldown > 0
-                  ? `Retry in ${magicCooldown}s`
-                  : 'Send magic link'}
+              {authSending ? 'Sending...' : magicCooldown > 0 ? `Retry in ${magicCooldown}s` : 'Send magic link'}
             </button>
           </form>
           <button
@@ -616,17 +539,24 @@ export default function Home() {
             <div className='mb-3 flex flex-wrap items-center gap-2'>
               <label className='text-sm text-zinc-600' htmlFor='video-select'>Current video</label>
               <select
-                className='min-w-[240px] rounded-md border border-zinc-300 px-2 py-1 text-sm'
+                className='min-w-[300px] rounded-md border border-zinc-300 px-2 py-1 text-sm'
                 id='video-select'
                 value={selectedVideo?.id ?? ''}
                 onChange={(event) => setSelectedVideoId(event.target.value)}
               >
                 {videos.map((video) => (
                   <option key={video.id} value={video.id}>
-                    [{video.provider}] {video.title}
+                    {video.title} [{video.storage_key ?? 'no-key'}]
                   </option>
                 ))}
               </select>
+              <button
+                className='rounded-md border border-zinc-300 px-3 py-1 text-sm text-zinc-700 hover:bg-zinc-50'
+                type='button'
+                onClick={() => void refreshPlayUrl()}
+              >
+                Refresh URL
+              </button>
               <button
                 className='rounded-md border border-zinc-300 px-3 py-1 text-sm text-zinc-700 hover:bg-zinc-50'
                 type='button'
@@ -635,44 +565,61 @@ export default function Home() {
                 {isPlayerFullscreen ? 'Exit fullscreen' : 'Fullscreen player'}
               </button>
             </div>
-            {selectedVideo ? (
-              <div
-                ref={playerContainerRef}
-                className={`overflow-hidden rounded-lg border border-zinc-200 ${
-                  isPlayerFullscreen ? 'flex items-center justify-center bg-black p-3' : ''
-                }`}
-              >
-                <iframe
-                  src={selectedVideo.embed_url}
-                  title={selectedVideo.title}
-                  className={isPlayerFullscreen ? 'h-[75vh] w-[95vw]' : 'h-[420px] w-full'}
-                  allowFullScreen
+            <div
+              ref={playerContainerRef}
+              className={`overflow-hidden rounded-lg border border-zinc-200 ${isPlayerFullscreen ? 'flex items-center justify-center bg-black p-3' : ''}`}
+            >
+              {loadingPlayUrl ? (
+                <div className='flex h-[420px] w-full items-center justify-center text-sm text-zinc-600'>
+                  Creating signed URL...
+                </div>
+              ) : playUrl ? (
+                <video
+                  src={playUrl}
+                  controls
+                  playsInline
+                  preload='metadata'
+                  className={isPlayerFullscreen ? 'h-[75vh] w-[95vw] bg-black' : 'h-[420px] w-full bg-black'}
                 />
-              </div>
+              ) : (
+                <div className='flex h-[420px] w-full items-center justify-center text-sm text-zinc-600'>
+                  {playUrlError || 'No playable URL. Choose a video or check storage key.'}
+                </div>
+              )}
+            </div>
+            {selectedVideo?.source_url ? (
+              <p className='mt-2 text-xs text-zinc-500'>
+                Source: <a className='underline' href={selectedVideo.source_url} target='_blank' rel='noreferrer'>{selectedVideo.source_url}</a>
+              </p>
             ) : null}
-            <p className='mt-2 text-xs text-zinc-500'>
-              Note: embedded Bilibili player controls are limited by platform policy. For stable pause/slow-play,
-              prefer YouTube embed or videos you own with custom player support.
-            </p>
           </article>
 
           <article className='rounded-xl border border-zinc-200 bg-white p-4 shadow-sm'>
-            <h2 className='text-base font-semibold text-zinc-900'>Add video (YouTube/Bilibili)</h2>
-            <form className='mt-3 grid gap-3 md:grid-cols-[1fr_2fr_auto]' onSubmit={handleAddVideo}>
+            <h2 className='text-base font-semibold text-zinc-900'>Add hosted video (R2)</h2>
+            <form className='mt-3 grid gap-3 md:grid-cols-1' onSubmit={handleAddVideo}>
               <input
                 className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-                placeholder='Optional title'
+                placeholder='Title'
+                required
                 value={videoTitle}
                 onChange={(event) => setVideoTitle(event.target.value)}
               />
               <input
                 className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-                placeholder='Paste iframe / YouTube URL / Bilibili URL'
+                placeholder='Storage key, e.g. videos/sample-001.mp4'
                 required
-                value={videoInput}
-                onChange={(event) => setVideoInput(event.target.value)}
+                value={videoStorageKey}
+                onChange={(event) => setVideoStorageKey(event.target.value)}
               />
-              <button className='rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white' type='submit'>Save</button>
+              <input
+                className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
+                placeholder='Source URL (optional)'
+                value={videoSourceUrl}
+                onChange={(event) => setVideoSourceUrl(event.target.value)}
+              />
+              <button className='rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white' type='submit'>
+                Save video metadata
+              </button>
             </form>
           </article>
         </div>
@@ -747,7 +694,7 @@ export default function Home() {
                 </label>
               ) : null}
 
-              <button className='w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60' type='submit' disabled={saving || selectedDrivers.length === 0}>
+              <button className='w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60' type='submit' disabled={saving || selectedDrivers.length === 0 || !selectedVideoId}>
                 {saving ? 'Saving...' : 'Save annotation'}
               </button>
             </form>
@@ -757,18 +704,10 @@ export default function Home() {
             <div className='mb-2 flex flex-wrap items-center justify-between gap-2'>
               <h2 className='text-base font-semibold text-zinc-900'>Mode</h2>
               <div className='inline-flex rounded-md border border-zinc-300 p-1'>
-                <button
-                  type='button'
-                  onClick={() => setMode('practice')}
-                  className={`rounded px-3 py-1 text-sm ${mode === 'practice' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}
-                >
+                <button type='button' onClick={() => setMode('practice')} className={`rounded px-3 py-1 text-sm ${mode === 'practice' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}>
                   Practice
                 </button>
-                <button
-                  type='button'
-                  onClick={() => setMode('supervision')}
-                  className={`rounded px-3 py-1 text-sm ${mode === 'supervision' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}
-                >
+                <button type='button' onClick={() => setMode('supervision')} className={`rounded px-3 py-1 text-sm ${mode === 'supervision' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}>
                   Supervision
                 </button>
               </div>
