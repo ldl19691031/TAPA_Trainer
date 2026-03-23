@@ -1,65 +1,779 @@
-import Image from "next/image";
+"use client";
+
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { getSupabaseBrowserClient } from "../lib/supabase-browser";
+
+type Mode = "practice" | "supervision";
+type VideoProvider = "youtube" | "bilibili";
+
+type VideoRow = {
+  id: string;
+  title: string;
+  provider: VideoProvider;
+  embed_url: string;
+  created_by: string;
+  created_at: string;
+};
+
+type AnnotationRow = {
+  id: string;
+  video_id: string;
+  user_id: string;
+  start_sec: number;
+  end_sec: number;
+  drivers: string[];
+  comment: string | null;
+  created_at: string;
+};
+
+type MergeCluster = {
+  start_sec: number;
+  end_sec: number;
+  annotations: AnnotationRow[];
+  driverCount: Record<string, number>;
+};
+
+const MIN_SEGMENT_SECONDS = 2;
+const SNAP_STEP_SECONDS = 0.5;
+const MERGE_THRESHOLD = 0.5;
+const MAX_COMMENT_LENGTH = 1000;
+
+const DRIVE_OPTIONS = [
+  {
+    id: "be_perfect",
+    label: "要完�?,
+    hint: "提示占位：常见迹象可包括高标准、反复修正、害怕犯错�?,
+  },
+  {
+    id: "be_strong",
+    label: "要坚�?,
+    hint: "提示占位：常见迹象可包括抑制脆弱、强调独自承受�?,
+  },
+  {
+    id: "try_hard",
+    label: "要努力试",
+    hint: "提示占位：常见迹象可包括持续用力但目标表达不够聚焦�?,
+  },
+  {
+    id: "hurry_up",
+    label: "要迅�?,
+    hint: "提示占位：常见迹象可包括语速快、打断、急促切换话题�?,
+  },
+  {
+    id: "please_others",
+    label: "要讨�?,
+    hint: "提示占位：常见迹象可包括优先迎合、避免冲突、寻求认可�?,
+  },
+] as const;
+
+const DRIVE_LABEL_MAP = Object.fromEntries(
+  DRIVE_OPTIONS.map((item) => [item.id, item.label]),
+) as Record<string, string>;
+
+const DEFAULT_BILIBILI_EMBED =
+  "https://player.bilibili.com/player.html?isOutside=true&aid=114897304228587&bvid=BV1UEgWz9EBE&cid=31212832462&p=1";
+
+const defaultVideo: VideoRow = {
+  id: "sample-bilibili",
+  title: "起手案例（Bilibili 访谈�?,
+  provider: "bilibili",
+  embed_url: DEFAULT_BILIBILI_EMBED,
+  created_by: "system",
+  created_at: new Date().toISOString(),
+};
+
+function snapToStep(value: number, step: number): number {
+  return Math.round(value / step) * step;
+}
+
+function normalizeSegment(start: number, end: number): { start: number; end: number } {
+  const snappedStart = Math.max(0, snapToStep(start, SNAP_STEP_SECONDS));
+  const snappedEnd = Math.max(0, snapToStep(end, SNAP_STEP_SECONDS));
+  const adjustedEnd =
+    snappedEnd - snappedStart >= MIN_SEGMENT_SECONDS
+      ? snappedEnd
+      : snapToStep(snappedStart + MIN_SEGMENT_SECONDS, SNAP_STEP_SECONDS);
+  return { start: snappedStart, end: adjustedEnd };
+}
+
+function overlapRatio(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
+  const overlap = Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
+  if (overlap <= 0) {
+    return 0;
+  }
+  const base = Math.max(0.0001, Math.min(aEnd - aStart, bEnd - bStart));
+  return overlap / base;
+}
+
+function buildMergeClusters(rows: AnnotationRow[]): MergeCluster[] {
+  const sorted = [...rows].sort((a, b) => a.start_sec - b.start_sec);
+  const clusters: MergeCluster[] = [];
+
+  for (const row of sorted) {
+    const match = clusters.find((cluster) => {
+      return (
+        overlapRatio(row.start_sec, row.end_sec, cluster.start_sec, cluster.end_sec) >=
+        MERGE_THRESHOLD
+      );
+    });
+
+    if (!match) {
+      const driverCount: Record<string, number> = {};
+      for (const driver of row.drivers) {
+        driverCount[driver] = (driverCount[driver] ?? 0) + 1;
+      }
+      clusters.push({
+        start_sec: row.start_sec,
+        end_sec: row.end_sec,
+        annotations: [row],
+        driverCount,
+      });
+      continue;
+    }
+
+    match.start_sec = Math.min(match.start_sec, row.start_sec);
+    match.end_sec = Math.max(match.end_sec, row.end_sec);
+    match.annotations.push(row);
+    for (const driver of row.drivers) {
+      match.driverCount[driver] = (match.driverCount[driver] ?? 0) + 1;
+    }
+  }
+
+  return clusters.sort((a, b) => a.start_sec - b.start_sec);
+}
+
+function formatSeconds(value: number): string {
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.floor(value % 60);
+  const tenths = Math.round((value - Math.floor(value)) * 10);
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
+}
+
+function parseVideoInput(input: string): { provider: VideoProvider; embedUrl: string } | null {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const iframeMatch = trimmed.match(/src=['"]([^'"]+)['"]/i);
+  const extracted = iframeMatch ? iframeMatch[1] : trimmed;
+  const maybeProtocolLess = extracted.startsWith("//") ? `https:${extracted}` : extracted;
+
+  if (maybeProtocolLess.includes("player.bilibili.com/player.html")) {
+    return { provider: "bilibili", embedUrl: maybeProtocolLess };
+  }
+
+  const bvidMatch = maybeProtocolLess.match(/BV[0-9A-Za-z]+/);
+  if (bvidMatch) {
+    return {
+      provider: "bilibili",
+      embedUrl: `https://player.bilibili.com/player.html?isOutside=true&bvid=${bvidMatch[0]}&p=1`,
+    };
+  }
+
+  try {
+    const url = new URL(maybeProtocolLess);
+    const host = url.hostname.replace(/^www\./, "");
+
+    if (host === "youtu.be") {
+      const id = url.pathname.replace("/", "");
+      if (id) {
+        return {
+          provider: "youtube",
+          embedUrl: `https://www.youtube.com/embed/${id}`,
+        };
+      }
+    }
+
+    if (host === "youtube.com" || host === "m.youtube.com") {
+      const id = url.searchParams.get("v");
+      if (id) {
+        return {
+          provider: "youtube",
+          embedUrl: `https://www.youtube.com/embed/${id}`,
+        };
+      }
+      const shortsMatch = url.pathname.match(/\/shorts\/([^/]+)/);
+      if (shortsMatch?.[1]) {
+        return {
+          provider: "youtube",
+          embedUrl: `https://www.youtube.com/embed/${shortsMatch[1]}`,
+        };
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
 
 export default function Home() {
+  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const envReady = Boolean(supabase);
+
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(envReady);
+  const [email, setEmail] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
+
+  const [videos, setVideos] = useState<VideoRow[]>([defaultVideo]);
+  const [selectedVideoId, setSelectedVideoId] = useState(defaultVideo.id);
+  const [videoTitle, setVideoTitle] = useState("");
+  const [videoInput, setVideoInput] = useState(DEFAULT_BILIBILI_EMBED);
+
+  const [mode, setMode] = useState<Mode>("practice");
+  const [annotations, setAnnotations] = useState<AnnotationRow[]>([]);
+  const [loadingAnnotations, setLoadingAnnotations] = useState(false);
+  const [queryError, setQueryError] = useState("");
+
+  const [segmentStart, setSegmentStart] = useState(0);
+  const [segmentEnd, setSegmentEnd] = useState(MIN_SEGMENT_SECONDS);
+  const [selectedDrivers, setSelectedDrivers] = useState<string[]>([]);
+  const [comment, setComment] = useState("");
+  const [quickMode, setQuickMode] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const selectedVideo = useMemo(
+    () => videos.find((video) => video.id === selectedVideoId) ?? videos[0],
+    [selectedVideoId, videos],
+  );
+
+  const loadAnnotations = async () => {
+    if (!supabase || !session || !selectedVideoId) {
+      return;
+    }
+
+    setLoadingAnnotations(true);
+    const { data, error } = await supabase
+      .from("annotations")
+      .select("id,video_id,user_id,start_sec,end_sec,drivers,comment,created_at")
+      .eq("video_id", selectedVideoId)
+      .order("start_sec", { ascending: true });
+    setLoadingAnnotations(false);
+
+    if (error) {
+      setQueryError("无法读取 annotations 表，请先执行 SQL 初始化脚本�?);
+      setAnnotations([]);
+      return;
+    }
+
+    setQueryError("");
+    setAnnotations((data ?? []) as AnnotationRow[]);
+  };
+
+  useEffect(() => {
+    if (!supabase) {
+      return;
+    }
+
+    const initAuth = async () => {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session);
+      setAuthLoading(false);
+    };
+
+    void initAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [supabase]);
+
+  useEffect(() => {
+    if (!supabase || !session) {
+      return;
+    }
+    let active = true;
+    const run = async () => {
+      const { data, error } = await supabase
+        .from("videos")
+        .select("id,title,provider,embed_url,created_by,created_at")
+        .order("created_at", { ascending: false });
+
+      if (!active) {
+        return;
+      }
+
+      if (error) {
+        setQueryError(
+          "无法读取 videos 表，请先执行 SQL 初始化脚本。系统暂时使用内置案例视频�?,
+        );
+        setVideos([defaultVideo]);
+        setSelectedVideoId(defaultVideo.id);
+        return;
+      }
+
+      const rows = (data ?? []) as VideoRow[];
+      if (rows.length === 0) {
+        setVideos([defaultVideo]);
+        setSelectedVideoId(defaultVideo.id);
+        return;
+      }
+
+      setVideos(rows);
+      setSelectedVideoId((current) =>
+        rows.some((item) => item.id === current) ? current : rows[0].id,
+      );
+    };
+    void run();
+    return () => {
+      active = false;
+    };
+  }, [session, supabase]);
+
+  useEffect(() => {
+    if (!supabase || !session || !selectedVideoId) {
+      return;
+    }
+    let active = true;
+    const run = async () => {
+      setLoadingAnnotations(true);
+      const { data, error } = await supabase
+        .from("annotations")
+        .select("id,video_id,user_id,start_sec,end_sec,drivers,comment,created_at")
+        .eq("video_id", selectedVideoId)
+        .order("start_sec", { ascending: true });
+
+      if (!active) {
+        return;
+      }
+
+      setLoadingAnnotations(false);
+      if (error) {
+        setQueryError("无法读取 annotations 表，请先执行 SQL 初始化脚本�?);
+        setAnnotations([]);
+        return;
+      }
+
+      setQueryError("");
+      setAnnotations((data ?? []) as AnnotationRow[]);
+    };
+    void run();
+    return () => {
+      active = false;
+    };
+  }, [selectedVideoId, session, supabase]);
+
+  const handleSendMagicLink = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase) {
+      setAuthMessage("缺少 Supabase 环境变量，无法登录�?);
+      return;
+    }
+    setAuthMessage("");
+    const redirectTo =
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      (typeof window !== "undefined" ? window.location.origin : undefined);
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: {
+        emailRedirectTo: redirectTo,
+      },
+    });
+    if (error) {
+      setAuthMessage(`发送失败：${error.message}`);
+      return;
+    }
+    setAuthMessage("登录邮件已发送，请在邮箱中打开链接完成登录�?);
+  };
+
+  const handleSignOut = async () => {
+    if (!supabase) {
+      return;
+    }
+    await supabase.auth.signOut();
+    setSession(null);
+    setAnnotations([]);
+  };
+
+  const handleAddVideo = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase || !session) {
+      return;
+    }
+    const parsed = parseVideoInput(videoInput);
+    if (!parsed) {
+      setQueryError("视频地址无法识别，仅支持 YouTube / Bilibili�?);
+      return;
+    }
+
+    const trimmedTitle = videoTitle.trim();
+    const finalTitle = trimmedTitle.length > 0 ? trimmedTitle : "未命名视�?;
+
+    const { data, error } = await supabase
+      .from("videos")
+      .insert({
+        title: finalTitle,
+        provider: parsed.provider,
+        embed_url: parsed.embedUrl,
+      })
+      .select("id,title,provider,embed_url,created_by,created_at")
+      .single();
+
+    if (error) {
+      setQueryError(`创建视频失败�?{error.message}`);
+      return;
+    }
+
+    if (data) {
+      const row = data as VideoRow;
+      setVideos((current) => [row, ...current.filter((item) => item.id !== row.id)]);
+      setSelectedVideoId(row.id);
+      setVideoTitle("");
+      setQueryError("");
+    }
+  };
+
+  const toggleDriver = (driverId: string) => {
+    setSelectedDrivers((current) =>
+      current.includes(driverId)
+        ? current.filter((item) => item !== driverId)
+        : [...current, driverId],
+    );
+  };
+
+  const handleSubmitAnnotation = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase || !session || !selectedVideo) {
+      return;
+    }
+    if (selectedDrivers.length === 0) {
+      setQueryError("请至少选择一个驱力�?);
+      return;
+    }
+
+    const normalized = normalizeSegment(segmentStart, segmentEnd);
+    setSaving(true);
+    const { error } = await supabase.from("annotations").insert({
+      video_id: selectedVideo.id,
+      start_sec: normalized.start,
+      end_sec: normalized.end,
+      drivers: selectedDrivers,
+      comment: quickMode ? null : comment.trim() || null,
+    });
+    setSaving(false);
+
+    if (error) {
+      setQueryError(`保存片段失败�?{error.message}`);
+      return;
+    }
+
+    setSegmentStart(normalized.start);
+    setSegmentEnd(normalized.end + MIN_SEGMENT_SECONDS);
+    setSelectedDrivers([]);
+    setComment("");
+    setQueryError("");
+    await loadAnnotations();
+  };
+
+  const visibleAnnotations = useMemo(() => {
+    if (!session) {
+      return [];
+    }
+    return mode === "practice"
+      ? annotations.filter((item) => item.user_id === session.user.id)
+      : annotations;
+  }, [annotations, mode, session]);
+
+  const clusters = useMemo(
+    () => (mode === "supervision" ? buildMergeClusters(visibleAnnotations) : []),
+    [mode, visibleAnnotations],
+  );
+
+  if (authLoading) {
+    return (
+      <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-4 py-10">
+        <p className="text-sm text-zinc-600">正在初始化登录状�?..</p>
+      </main>
+    );
+  }
+
+  if (!session) {
+    return (
+      <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-4 py-10">
+        <section className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
+          <h1 className="text-xl font-semibold text-zinc-900">驱力行为识别训练</h1>
+          <p className="mt-2 text-sm text-zinc-600">
+            使用邮箱登录后可进入视频标注。当前登录方式为邮件魔法链接�?          </p>
+          {!envReady ? (
+            <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800">
+              缺少 NEXT_PUBLIC_SUPABASE_URL �?NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY�?            </p>
+          ) : null}
+          <form className="mt-4 space-y-3" onSubmit={handleSendMagicLink}>
+            <input
+              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none ring-blue-500 focus:ring"
+              placeholder="your@email.com"
+              type="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+            <button
+              className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              type="submit"
+            >
+              发送登录链�?            </button>
+          </form>
+          {authMessage ? <p className="mt-3 text-sm text-zinc-700">{authMessage}</p> : null}
+        </section>
+      </main>
+    );
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <main className="mx-auto min-h-screen w-full max-w-7xl px-4 py-6">
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+        <div>
+          <h1 className="text-lg font-semibold text-zinc-900">驱力行为识别训练</h1>
+          <p className="text-sm text-zinc-600">
+            当前用户：{session.user.email} | 最小时�?{MIN_SEGMENT_SECONDS}s | 时间吸附{" "}
+            {SNAP_STEP_SECONDS}s | 合并阈�?{Math.round(MERGE_THRESHOLD * 100)}%
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <button
+          className="rounded-md border border-zinc-300 px-3 py-2 text-sm hover:bg-zinc-50"
+          onClick={handleSignOut}
+          type="button"
+        >
+          退出登�?        </button>
+      </header>
+
+      <section className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
+        <div className="space-y-4">
+          <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <label className="text-sm text-zinc-600" htmlFor="video-select">
+                当前视频
+              </label>
+              <select
+                className="min-w-[240px] rounded-md border border-zinc-300 px-2 py-1 text-sm"
+                id="video-select"
+                value={selectedVideo?.id ?? ""}
+                onChange={(event) => setSelectedVideoId(event.target.value)}
+              >
+                {videos.map((video) => (
+                  <option key={video.id} value={video.id}>
+                    [{video.provider}] {video.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {selectedVideo ? (
+              <div className="overflow-hidden rounded-lg border border-zinc-200">
+                <iframe
+                  src={selectedVideo.embed_url}
+                  title={selectedVideo.title}
+                  className="h-[420px] w-full"
+                  allowFullScreen
+                />
+              </div>
+            ) : null}
+          </article>
+
+          <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <h2 className="text-base font-semibold text-zinc-900">添加视频（YouTube / Bilibili�?/h2>
+            <form className="mt-3 grid gap-3 md:grid-cols-[1fr_2fr_auto]" onSubmit={handleAddVideo}>
+              <input
+                className="rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none ring-blue-500 focus:ring"
+                placeholder="视频标题（可选）"
+                value={videoTitle}
+                onChange={(event) => setVideoTitle(event.target.value)}
+              />
+              <input
+                className="rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none ring-blue-500 focus:ring"
+                placeholder="粘贴 iframe、YouTube 链接�?B 站链�?
+                required
+                value={videoInput}
+                onChange={(event) => setVideoInput(event.target.value)}
+              />
+              <button
+                className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                type="submit"
+              >
+                保存
+              </button>
+            </form>
+          </article>
         </div>
-      </main>
-    </div>
+
+        <div className="space-y-4">
+          <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <h2 className="text-base font-semibold text-zinc-900">标注面板</h2>
+            <form className="mt-3 space-y-3" onSubmit={handleSubmitAnnotation}>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-sm text-zinc-700">
+                  开始秒�?                  <input
+                    type="number"
+                    min={0}
+                    step={SNAP_STEP_SECONDS}
+                    value={segmentStart}
+                    onChange={(event) => setSegmentStart(Number(event.target.value))}
+                    className="mt-1 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm"
+                  />
+                </label>
+                <label className="text-sm text-zinc-700">
+                  结束秒数
+                  <input
+                    type="number"
+                    min={0}
+                    step={SNAP_STEP_SECONDS}
+                    value={segmentEnd}
+                    onChange={(event) => setSegmentEnd(Number(event.target.value))}
+                    className="mt-1 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm"
+                  />
+                </label>
+              </div>
+
+              <div className="text-xs text-zinc-600">
+                片段会自动做最小时长校正，并吸附到 {SNAP_STEP_SECONDS}s 粒度�?              </div>
+
+              <div className="grid grid-cols-1 gap-2">
+                {DRIVE_OPTIONS.map((driver) => {
+                  const active = selectedDrivers.includes(driver.id);
+                  return (
+                    <button
+                      key={driver.id}
+                      type="button"
+                      onClick={() => toggleDriver(driver.id)}
+                      className={`group relative rounded-md border px-3 py-2 text-left text-sm transition ${
+                        active
+                          ? "border-blue-600 bg-blue-50 text-blue-700"
+                          : "border-zinc-300 text-zinc-800 hover:bg-zinc-50"
+                      }`}
+                    >
+                      <span className="font-medium">{driver.label}</span>
+                      <span className="ml-2 text-xs text-zinc-500">(悬停看提�?</span>
+                      <span className="pointer-events-none absolute left-0 top-full z-10 mt-1 hidden w-full rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-700 shadow-sm group-hover:block">
+                        {driver.hint}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <label className="flex items-center gap-2 text-sm text-zinc-700">
+                <input
+                  type="checkbox"
+                  checked={quickMode}
+                  onChange={(event) => setQuickMode(event.target.checked)}
+                />
+                快速模式（只选择驱力，不写评论）
+              </label>
+
+              {!quickMode ? (
+                <label className="text-sm text-zinc-700">
+                  评论（可选）
+                  <textarea
+                    className="mt-1 h-24 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm"
+                    maxLength={MAX_COMMENT_LENGTH}
+                    value={comment}
+                    onChange={(event) => setComment(event.target.value)}
+                  />
+                </label>
+              ) : null}
+
+              <button
+                className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                type="submit"
+                disabled={saving || selectedDrivers.length === 0}
+              >
+                {saving ? "保存�?.." : "保存片段标注"}
+              </button>
+            </form>
+          </article>
+
+          <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-semibold text-zinc-900">查看模式</h2>
+              <div className="inline-flex rounded-md border border-zinc-300 p-1">
+                <button
+                  type="button"
+                  onClick={() => setMode("practice")}
+                  className={`rounded px-3 py-1 text-sm ${
+                    mode === "practice" ? "bg-zinc-900 text-white" : "text-zinc-700"
+                  }`}
+                >
+                  练习模式
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("supervision")}
+                  className={`rounded px-3 py-1 text-sm ${
+                    mode === "supervision" ? "bg-zinc-900 text-white" : "text-zinc-700"
+                  }`}
+                >
+                  督导模式
+                </button>
+              </div>
+            </div>
+
+            {queryError ? (
+              <p className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800">
+                {queryError}
+              </p>
+            ) : null}
+
+            {loadingAnnotations ? (
+              <p className="text-sm text-zinc-600">正在加载片段...</p>
+            ) : null}
+
+            {mode === "supervision" ? (
+              <div className="space-y-3">
+                <p className="text-xs text-zinc-600">
+                  督导模式显示合并片段簇（容许不同标注者的轻微时间误差）�?                </p>
+                {clusters.length === 0 ? (
+                  <p className="text-sm text-zinc-600">暂无片段�?/p>
+                ) : (
+                  clusters.map((cluster, index) => (
+                    <div key={`${cluster.start_sec}-${cluster.end_sec}-${index}`} className="rounded-md border border-zinc-200 p-3">
+                      <p className="text-sm font-medium text-zinc-900">
+                        片段 {formatSeconds(cluster.start_sec)} - {formatSeconds(cluster.end_sec)}
+                      </p>
+                      <p className="text-xs text-zinc-600">
+                        �?{cluster.annotations.length} 条标�?                      </p>
+                      <p className="mt-1 text-xs text-zinc-700">
+                        驱力统计�?                        {Object.entries(cluster.driverCount)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([driver, count]) => `${DRIVE_LABEL_MAP[driver] ?? driver} x${count}`)
+                          .join("�?) || "�?}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {visibleAnnotations.length === 0 ? (
+                  <p className="text-sm text-zinc-600">你还没有标注任何片段�?/p>
+                ) : (
+                  visibleAnnotations.map((item) => (
+                    <div key={item.id} className="rounded-md border border-zinc-200 p-3">
+                      <p className="text-sm font-medium text-zinc-900">
+                        {formatSeconds(item.start_sec)} - {formatSeconds(item.end_sec)}
+                      </p>
+                      <p className="text-xs text-zinc-700">
+                        驱力�?                        {item.drivers
+                          .map((driver) => DRIVE_LABEL_MAP[driver] ?? driver)
+                          .join("�?)}
+                      </p>
+                      {item.comment ? (
+                        <p className="mt-1 text-xs text-zinc-600">评论：{item.comment}</p>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </article>
+        </div>
+      </section>
+    </main>
   );
 }
