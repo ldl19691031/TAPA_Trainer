@@ -122,11 +122,11 @@ function IconClose() {
 }
 
 const CUE_ROWS: Array<{ key: keyof DriveCue; icon: string }> = [
-  { key: 'lexicon', icon: 'L' },
-  { key: 'tone', icon: 'T' },
-  { key: 'gesture', icon: 'G' },
-  { key: 'posture', icon: 'P' },
-  { key: 'face', icon: 'F' },
+  { key: 'lexicon', icon: '\u{1F4AC}' }, // speech balloon
+  { key: 'tone', icon: '\u{1F3B5}' }, // musical note
+  { key: 'gesture', icon: '\u{1F44B}' }, // waving hand
+  { key: 'posture', icon: '\u{1F9CD}' }, // standing person
+  { key: 'face', icon: '\u{1F642}' }, // slight smile
 ];
 
 const DRIVE_OPTIONS = [
