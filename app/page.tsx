@@ -774,7 +774,7 @@ export default function Home() {
               </div>
 
               <p className='text-xs text-zinc-500'>
-                Default is current playback time 卤2s, then snapped to {SNAP_STEP_SECONDS}s with min {MIN_SEGMENT_SECONDS}s.
+                Default is current playback time +/- 2s, then snapped to {SNAP_STEP_SECONDS}s with min {MIN_SEGMENT_SECONDS}s.
               </p>
 
               <div className='grid grid-cols-1 gap-2'>
