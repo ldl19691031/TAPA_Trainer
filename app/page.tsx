@@ -1208,7 +1208,7 @@ export default function Home() {
       ) : null}
 
       {isOnboardingOpen ? (
-        <div className='fixed inset-0 z-[120] p-4' role='dialog' aria-modal='true'>
+        <div className='pointer-events-none fixed inset-0 z-[120] p-4' role='dialog' aria-modal='true'>
           {onboardingHighlightRect ? (
             <div
               className='pointer-events-none fixed rounded-xl border-2 border-blue-400 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]'
@@ -1223,7 +1223,7 @@ export default function Home() {
             <div className='pointer-events-none fixed inset-0 bg-black/55' />
           )}
           <section
-            className='fixed z-[130] w-[min(440px,calc(100vw-32px))] rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl'
+            className='pointer-events-auto fixed z-[130] w-[min(440px,calc(100vw-32px))] rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl'
             style={
               onboardingCardPosition
                 ? { top: onboardingCardPosition.top, left: onboardingCardPosition.left }
