@@ -37,6 +37,25 @@ const MIN_SEGMENT_SECONDS = 2;
 const SNAP_STEP_SECONDS = 0.5;
 const MERGE_THRESHOLD = 0.5;
 const MAX_COMMENT_LENGTH = 1000;
+const ONBOARDING_STORAGE_KEY = 'tapa_onboarding_seen_v1';
+
+const ONBOARDING_STEPS = [
+  {
+    title: '切换视频',
+    description:
+      '在页面左上角的下拉框切换当前训练视频。切换后会自动刷新对应的标注数据。',
+  },
+  {
+    title: '添加标注',
+    description:
+      '播放器右下角点击“标注”按钮即可打开标注面板，默认会自动填入当前时间前后约 2 秒。',
+  },
+  {
+    title: '慢放与速度',
+    description:
+      '播放器右下角的“1x/1.5x”等按钮可调节播放速度，建议在做驱力观察时使用 0.5x 或 0.75x。',
+  },
+] as const;
 
 type DriveCue = {
   lexicon: string;
@@ -111,6 +130,21 @@ function IconClose() {
     <svg viewBox='0 0 24 24' aria-hidden='true' className='h-4 w-4'>
       <path
         d='M18 6L6 18M6 6l12 12'
+        fill='none'
+        stroke='currentColor'
+        strokeWidth='2'
+        strokeLinecap='round'
+        strokeLinejoin='round'
+      />
+    </svg>
+  );
+}
+
+function IconHelp() {
+  return (
+    <svg viewBox='0 0 24 24' aria-hidden='true' className='h-4 w-4'>
+      <path
+        d='M9.1 9a3 3 0 1 1 5.8 1c0 2-3 2-3 4M12 17h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z'
         fill='none'
         stroke='currentColor'
         strokeWidth='2'
@@ -317,6 +351,8 @@ export default function Home() {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const selectedVideo = useMemo(
@@ -591,6 +627,46 @@ export default function Home() {
     [mode, visibleAnnotations],
   );
 
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+    const seen = window.localStorage.getItem(ONBOARDING_STORAGE_KEY);
+    if (!seen) {
+      const timer = window.setTimeout(() => {
+        setOnboardingStepIndex(0);
+        setIsOnboardingOpen(true);
+      }, 0);
+      return () => {
+        window.clearTimeout(timer);
+      };
+    }
+  }, [session]);
+
+  const finishOnboarding = (markAsSeen: boolean) => {
+    if (markAsSeen) {
+      window.localStorage.setItem(ONBOARDING_STORAGE_KEY, '1');
+    }
+    setIsOnboardingOpen(false);
+  };
+
+  const openOnboarding = () => {
+    setOnboardingStepIndex(0);
+    setIsOnboardingOpen(true);
+  };
+
+  const goOnboardingNext = () => {
+    if (onboardingStepIndex >= ONBOARDING_STEPS.length - 1) {
+      finishOnboarding(true);
+      return;
+    }
+    setOnboardingStepIndex((value) => value + 1);
+  };
+
+  const goOnboardingPrev = () => {
+    setOnboardingStepIndex((value) => Math.max(0, value - 1));
+  };
+
   if (authLoading) {
     return <main className='mx-auto flex min-h-screen items-center justify-center'>加载中...</main>;
   }
@@ -667,6 +743,15 @@ export default function Home() {
               aria-label='视频库'
             >
               <IconFolder />
+            </button>
+            <button
+              className='inline-flex items-center justify-center rounded-md px-2 py-2 text-zinc-700 hover:bg-zinc-100'
+              type='button'
+              onClick={openOnboarding}
+              title='使用引导'
+              aria-label='使用引导'
+            >
+              <IconHelp />
             </button>
             <button
               className='inline-flex items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50'
@@ -979,6 +1064,60 @@ export default function Home() {
                 {queryError}
               </p>
             ) : null}
+          </section>
+        </div>
+      ) : null}
+
+      {isOnboardingOpen ? (
+        <div className='fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4' role='dialog' aria-modal='true'>
+          <section className='w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl'>
+            <div className='mb-4 flex items-center justify-between'>
+              <h2 className='text-base font-semibold text-zinc-900'>首次使用引导</h2>
+              <button
+                type='button'
+                onClick={() => finishOnboarding(true)}
+                className='inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
+                title='关闭引导'
+                aria-label='关闭引导'
+              >
+                <IconClose />
+              </button>
+            </div>
+
+            <p className='mb-2 text-xs text-zinc-500'>
+              第 {onboardingStepIndex + 1} / {ONBOARDING_STEPS.length} 步
+            </p>
+            <h3 className='text-lg font-semibold text-zinc-900'>{ONBOARDING_STEPS[onboardingStepIndex].title}</h3>
+            <p className='mt-2 text-sm leading-6 text-zinc-700'>
+              {ONBOARDING_STEPS[onboardingStepIndex].description}
+            </p>
+
+            <div className='mt-5 flex items-center justify-between'>
+              <button
+                type='button'
+                onClick={() => finishOnboarding(true)}
+                className='text-sm text-zinc-500 hover:text-zinc-700'
+              >
+                跳过引导
+              </button>
+              <div className='flex items-center gap-2'>
+                <button
+                  type='button'
+                  onClick={goOnboardingPrev}
+                  disabled={onboardingStepIndex === 0}
+                  className='rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 disabled:opacity-40'
+                >
+                  上一步
+                </button>
+                <button
+                  type='button'
+                  onClick={goOnboardingNext}
+                  className='rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700'
+                >
+                  {onboardingStepIndex === ONBOARDING_STEPS.length - 1 ? '完成' : '下一步'}
+                </button>
+              </div>
+            </div>
           </section>
         </div>
       ) : null}
