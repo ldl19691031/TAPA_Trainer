@@ -43,5 +43,8 @@ next-env.d.ts
 # python
 __pycache__/
 *.pyc
+.venv-vision/
+.conda-vision/
+yolov8n-seg.pt
  
 .vercel

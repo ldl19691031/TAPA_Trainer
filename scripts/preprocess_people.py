@@ -34,6 +34,208 @@ import numpy as np
 import requests
 
 
+class YoloXOnnxDetector:
+  def __init__(
+    self,
+    model_path: str,
+    conf_threshold: float = 0.35,
+    nms_threshold: float = 0.5,
+    input_size: tuple[int, int] = (640, 640),
+  ) -> None:
+    self.model_path = model_path
+    self.conf_threshold = conf_threshold
+    self.nms_threshold = nms_threshold
+    self.input_size = input_size
+    self.strides = [8, 16, 32]
+    self.net = cv2.dnn.readNet(model_path)
+    self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+    self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+    self.grids, self.expanded_strides = self._generate_anchors()
+
+  def _generate_anchors(self) -> tuple[np.ndarray, np.ndarray]:
+    grids: list[np.ndarray] = []
+    expanded_strides: list[np.ndarray] = []
+    hsizes = [self.input_size[0] // stride for stride in self.strides]
+    wsizes = [self.input_size[1] // stride for stride in self.strides]
+    for hsize, wsize, stride in zip(hsizes, wsizes, self.strides):
+      xv, yv = np.meshgrid(np.arange(hsize), np.arange(wsize))
+      grid = np.stack((xv, yv), 2).reshape(1, -1, 2)
+      grids.append(grid)
+      shape = grid.shape[:2]
+      expanded_strides.append(np.full((*shape, 1), stride))
+    return np.concatenate(grids, 1), np.concatenate(expanded_strides, 1)
+
+  def _letterbox(self, frame: np.ndarray) -> tuple[np.ndarray, float]:
+    target_h, target_w = self.input_size
+    padded = np.ones((target_h, target_w, 3), dtype=np.float32) * 114.0
+    ratio = min(target_h / frame.shape[0], target_w / frame.shape[1])
+    resized = cv2.resize(
+      frame,
+      (int(frame.shape[1] * ratio), int(frame.shape[0] * ratio)),
+      interpolation=cv2.INTER_LINEAR,
+    ).astype(np.float32)
+    padded[: resized.shape[0], : resized.shape[1]] = resized
+    return padded, ratio
+
+  def infer(self, frame: np.ndarray) -> np.ndarray:
+    padded, ratio = self._letterbox(frame)
+    blob = np.transpose(padded, (2, 0, 1))[np.newaxis, :, :, :]
+    self.net.setInput(blob)
+    outs = self.net.forward(self.net.getUnconnectedOutLayersNames())
+    dets = outs[0][0]
+    dets[:, :2] = (dets[:, :2] + self.grids) * self.expanded_strides
+    dets[:, 2:4] = np.exp(dets[:, 2:4]) * self.expanded_strides
+
+    boxes = dets[:, :4]
+    boxes_xywh = np.ones_like(boxes)
+    boxes_xywh[:, 0] = boxes[:, 0] - boxes[:, 2] / 2.0
+    boxes_xywh[:, 1] = boxes[:, 1] - boxes[:, 3] / 2.0
+    boxes_xywh[:, 2] = boxes[:, 2]
+    boxes_xywh[:, 3] = boxes[:, 3]
+
+    scores = dets[:, 4:5] * dets[:, 5:]
+    max_scores = np.amax(scores, axis=1)
+    class_ids = np.argmax(scores, axis=1)
+    keep = cv2.dnn.NMSBoxesBatched(
+      boxes_xywh.tolist(),
+      max_scores.tolist(),
+      class_ids.tolist(),
+      self.conf_threshold,
+      self.nms_threshold,
+    )
+    if keep is None or len(keep) == 0:
+      return np.empty((0, 6), dtype=np.float32)
+
+    keep_indices = np.array(keep).reshape(-1)
+    candidates = np.concatenate([boxes_xywh, max_scores[:, None], class_ids[:, None]], axis=1)
+    picked = candidates[keep_indices]
+    picked[:, :4] = picked[:, :4] / ratio
+    return picked
+
+
+class NanoDetOnnxDetector:
+  def __init__(
+    self,
+    model_path: str,
+    conf_threshold: float = 0.35,
+    nms_threshold: float = 0.6,
+  ) -> None:
+    self.strides = (8, 16, 32, 64)
+    self.image_shape = (416, 416)
+    self.reg_max = 7
+    self.project = np.arange(self.reg_max + 1)
+    self.conf_threshold = conf_threshold
+    self.nms_threshold = nms_threshold
+    self.mean = np.array([103.53, 116.28, 123.675], dtype=np.float32).reshape(1, 1, 3)
+    self.std = np.array([57.375, 57.12, 58.395], dtype=np.float32).reshape(1, 1, 3)
+    self.net = cv2.dnn.readNet(model_path)
+    self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+    self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+    self.anchors_mlvl: list[np.ndarray] = []
+    for stride in self.strides:
+      feat_h = int(self.image_shape[0] / stride)
+      feat_w = int(self.image_shape[1] / stride)
+      shift_x = np.arange(0, feat_w) * stride
+      shift_y = np.arange(0, feat_h) * stride
+      xv, yv = np.meshgrid(shift_x, shift_y)
+      cx = xv.flatten() + 0.5 * (stride - 1)
+      cy = yv.flatten() + 0.5 * (stride - 1)
+      self.anchors_mlvl.append(np.column_stack((cx, cy)))
+
+  def _letterbox(self, frame: np.ndarray) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+    target_h, target_w = self.image_shape
+    img = frame.copy()
+    top, left, newh, neww = 0, 0, target_h, target_w
+    if img.shape[0] != img.shape[1]:
+      hw_scale = img.shape[0] / img.shape[1]
+      if hw_scale > 1:
+        newh, neww = target_h, int(target_w / hw_scale)
+        img = cv2.resize(img, (neww, newh), interpolation=cv2.INTER_AREA)
+        left = int((target_w - neww) * 0.5)
+        img = cv2.copyMakeBorder(img, 0, 0, left, target_w - neww - left, cv2.BORDER_CONSTANT, value=0)
+      else:
+        newh, neww = int(target_h * hw_scale), target_w
+        img = cv2.resize(img, (neww, newh), interpolation=cv2.INTER_AREA)
+        top = int((target_h - newh) * 0.5)
+        img = cv2.copyMakeBorder(img, top, target_h - newh - top, 0, 0, cv2.BORDER_CONSTANT, value=0)
+    else:
+      img = cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_AREA)
+    return img, (top, left, newh, neww)
+
+  def _unletterbox(
+    self,
+    bbox: np.ndarray,
+    original_shape: tuple[int, int],
+    letterbox_scale: tuple[int, int, int, int],
+  ) -> np.ndarray:
+    ret = bbox.copy()
+    h, w = original_shape
+    top, left, newh, neww = letterbox_scale
+    if h == w:
+      ratio = h / newh
+      return ret * ratio
+    ratioh, ratiow = h / newh, w / neww
+    ret[0] = max((ret[0] - left) * ratiow, 0)
+    ret[1] = max((ret[1] - top) * ratioh, 0)
+    ret[2] = min((ret[2] - left) * ratiow, w)
+    ret[3] = min((ret[3] - top) * ratioh, h)
+    return ret
+
+  def infer(self, frame: np.ndarray) -> np.ndarray:
+    input_blob, letterbox_scale = self._letterbox(frame)
+    img = input_blob.astype(np.float32)
+    img = (img - self.mean) / self.std
+    blob = cv2.dnn.blobFromImage(img)
+    self.net.setInput(blob)
+    outs = self.net.forward(self.net.getUnconnectedOutLayersNames())
+
+    cls_scores = outs[::2]
+    bbox_preds = outs[1::2]
+    bboxes_mlvl: list[np.ndarray] = []
+    scores_mlvl: list[np.ndarray] = []
+
+    for stride, cls_score, bbox_pred, anchors in zip(self.strides, cls_scores, bbox_preds, self.anchors_mlvl):
+      if cls_score.ndim == 3:
+        cls_score = cls_score.squeeze(axis=0)
+      if bbox_pred.ndim == 3:
+        bbox_pred = bbox_pred.squeeze(axis=0)
+      x_exp = np.exp(bbox_pred.reshape(-1, self.reg_max + 1))
+      x_sum = np.sum(x_exp, axis=1, keepdims=True)
+      bbox_pred = x_exp / x_sum
+      bbox_pred = np.dot(bbox_pred, self.project).reshape(-1, 4)
+      bbox_pred *= stride
+
+      points = anchors
+      x1 = np.clip(points[:, 0] - bbox_pred[:, 0], 0, self.image_shape[1])
+      y1 = np.clip(points[:, 1] - bbox_pred[:, 1], 0, self.image_shape[0])
+      x2 = np.clip(points[:, 0] + bbox_pred[:, 2], 0, self.image_shape[1])
+      y2 = np.clip(points[:, 1] + bbox_pred[:, 3], 0, self.image_shape[0])
+      bboxes_mlvl.append(np.column_stack([x1, y1, x2, y2]))
+      scores_mlvl.append(cls_score)
+
+    bboxes = np.concatenate(bboxes_mlvl, axis=0)
+    scores = np.concatenate(scores_mlvl, axis=0)
+    bboxes_wh = bboxes.copy()
+    bboxes_wh[:, 2:4] = bboxes_wh[:, 2:4] - bboxes_wh[:, 0:2]
+    class_ids = np.argmax(scores, axis=1)
+    confidences = np.max(scores, axis=1)
+    indices = cv2.dnn.NMSBoxes(
+      bboxes_wh.tolist(),
+      confidences.tolist(),
+      self.conf_threshold,
+      self.nms_threshold,
+    )
+    if indices is None or len(indices) == 0:
+      return np.empty((0, 6), dtype=np.float32)
+
+    keep = np.array(indices).reshape(-1)
+    picked = np.concatenate([bboxes, confidences[:, None], class_ids[:, None]], axis=1)[keep]
+    original_shape = (frame.shape[0], frame.shape[1])
+    for row in picked:
+      row[:4] = self._unletterbox(row[:4], original_shape, letterbox_scale)
+    return picked
+
+
 @dataclass
 class Detection:
   left: float
@@ -213,6 +415,66 @@ def extract_detections_hog(
   return detections
 
 
+def extract_detections_yolox_onnx(
+  frame: np.ndarray,
+  detector: YoloXOnnxDetector,
+  frame_width: int,
+  frame_height: int,
+  min_score: float,
+) -> list[Detection]:
+  predictions = detector.infer(frame)
+  detections: list[Detection] = []
+  for row in predictions:
+    x, y, w, h, score, class_id = row.tolist()
+    if int(class_id) != 0:
+      continue
+    score_value = float(score)
+    if score_value < min_score:
+      continue
+    detections.append(
+      Detection(
+        left=clamp01(float(x) / frame_width),
+        top=clamp01(float(y) / frame_height),
+        width=clamp01(float(w) / frame_width),
+        height=clamp01(float(h) / frame_height),
+        score=min(1.0, max(0.0, score_value)),
+        polygon=None,
+      )
+    )
+  return detections
+
+
+def extract_detections_nanodet_onnx(
+  frame: np.ndarray,
+  detector: NanoDetOnnxDetector,
+  frame_width: int,
+  frame_height: int,
+  min_score: float,
+) -> list[Detection]:
+  predictions = detector.infer(frame)
+  detections: list[Detection] = []
+  for row in predictions:
+    x1, y1, x2, y2, score, class_id = row.tolist()
+    if int(class_id) != 0:
+      continue
+    score_value = float(score)
+    if score_value < min_score:
+      continue
+    w = max(0.0, x2 - x1)
+    h = max(0.0, y2 - y1)
+    detections.append(
+      Detection(
+        left=clamp01(float(x1) / frame_width),
+        top=clamp01(float(y1) / frame_height),
+        width=clamp01(float(w) / frame_width),
+        height=clamp01(float(h) / frame_height),
+        score=min(1.0, max(0.0, score_value)),
+        polygon=None,
+      )
+    )
+  return detections
+
+
 def extract_sampled_frames_ffmpeg(
   video_path: Path,
   sample_fps: float,
@@ -325,7 +587,12 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--video-path", required=True, help="Absolute path to local mp4 file")
   parser.add_argument("--video-id", required=True, help="videos.id in Supabase")
   parser.add_argument("--model", default="yolov8n-seg.pt", help="Ultralytics segmentation model")
-  parser.add_argument("--backend", choices=["yolo", "hog"], default="yolo", help="Detection backend")
+  parser.add_argument(
+    "--backend",
+    choices=["yolo", "hog", "yolox_onnx", "nanodet_onnx"],
+    default="yolo",
+    help="Detection backend",
+  )
   parser.add_argument("--sample-fps", type=float, default=2.0, help="Sampling FPS for analysis")
   parser.add_argument("--start-sec", type=float, default=0.0, help="Optional start second")
   parser.add_argument("--end-sec", type=float, default=-1.0, help="Optional end second")
@@ -355,6 +622,8 @@ def main() -> None:
     raise RuntimeError("No frames extracted. Check video path and time range.")
 
   model = None
+  yolox_detector = None
+  nanodet_detector = None
   if args.backend == "yolo":
     try:
       from ultralytics import YOLO  # type: ignore
@@ -364,6 +633,22 @@ def main() -> None:
       raise RuntimeError(
         f"Failed to initialize YOLO backend ({exc}). "
         "Use --backend hog as a fallback."
+      ) from exc
+  elif args.backend == "yolox_onnx":
+    try:
+      yolox_detector = YoloXOnnxDetector(model_path=args.model, conf_threshold=args.min_score)
+    except Exception as exc:  # pragma: no cover
+      raise RuntimeError(
+        f"Failed to initialize YOLOX ONNX backend ({exc}). "
+        "Ensure --model points to a valid .onnx model."
+      ) from exc
+  elif args.backend == "nanodet_onnx":
+    try:
+      nanodet_detector = NanoDetOnnxDetector(model_path=args.model, conf_threshold=args.min_score)
+    except Exception as exc:  # pragma: no cover
+      raise RuntimeError(
+        f"Failed to initialize NanoDet ONNX backend ({exc}). "
+        "Ensure --model points to a valid .onnx model."
       ) from exc
   tracker = IoUTracker()
   rows: list[dict] = []
@@ -384,12 +669,30 @@ def main() -> None:
           min_score=args.min_score,
         )
       else:
-        detections = extract_detections_hog(
-          frame=frame,
-          frame_width=frame.shape[1],
-          frame_height=frame.shape[0],
-          min_score=args.min_score,
-        )
+        if args.backend == "hog":
+          detections = extract_detections_hog(
+            frame=frame,
+            frame_width=frame.shape[1],
+            frame_height=frame.shape[0],
+            min_score=args.min_score,
+          )
+        else:
+          if args.backend == "yolox_onnx":
+            detections = extract_detections_yolox_onnx(
+              frame=frame,
+              detector=yolox_detector,
+              frame_width=frame.shape[1],
+              frame_height=frame.shape[0],
+              min_score=args.min_score,
+            )
+          else:
+            detections = extract_detections_nanodet_onnx(
+              frame=frame,
+              detector=nanodet_detector,
+              frame_width=frame.shape[1],
+              frame_height=frame.shape[0],
+              min_score=args.min_score,
+            )
       assignments = tracker.update(detections)
       for track_id, det in assignments:
         rows.append(
