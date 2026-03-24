@@ -359,7 +359,6 @@ export default function Home() {
   const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [plyrReadySeq, setPlyrReadySeq] = useState(0);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
   const [onboardingCompletedTargets, setOnboardingCompletedTargets] = useState<
@@ -635,7 +634,6 @@ export default function Home() {
       });
       localPlayer.speed = videoRef.current.playbackRate;
       playerRef.current = localPlayer;
-      setPlyrReadySeq((value) => value + 1);
     });
 
     return () => {
@@ -646,7 +644,6 @@ export default function Home() {
       if (playerRef.current === localPlayer) {
         playerRef.current = null;
       }
-      setPlyrReadySeq((value) => value + 1);
     };
   }, [playUrl]);
 
@@ -731,59 +728,70 @@ export default function Home() {
   }, [loadPersonCandidatesForTime]);
 
   useEffect(() => {
-    const controls = playerRef.current?.elements?.controls as HTMLElement | undefined;
-    if (!controls) {
-      speedButtonRef.current = null;
-      annotationButtonRef.current = null;
-      return;
-    }
-
-    let container = controls.querySelector('.tapa-plyr-extra') as HTMLDivElement | null;
-    if (!container) {
-      container = document.createElement('div');
-      container.className = 'tapa-plyr-extra';
-      controls.appendChild(container);
-    }
-
-    const getOrCreateButton = (id: string) => {
-      let button = container.querySelector<HTMLButtonElement>(`button[data-tapa-id="${id}"]`);
-      if (!button) {
-        button = document.createElement('button');
-        button.type = 'button';
-        button.dataset.tapaId = id;
-        button.className = 'plyr__control tapa-plyr-extra-btn';
-        container.appendChild(button);
+    let rafId = 0;
+    let canceled = false;
+    const mountControls = () => {
+      if (canceled) {
+        return;
       }
-      return button;
+      const controls = playerRef.current?.elements?.controls as HTMLElement | undefined;
+      if (!controls) {
+        rafId = window.requestAnimationFrame(mountControls);
+        return;
+      }
+      let container = controls.querySelector('.tapa-plyr-extra') as HTMLDivElement | null;
+      if (!container) {
+        container = document.createElement('div');
+        container.className = 'tapa-plyr-extra';
+        controls.appendChild(container);
+      }
+
+      const getOrCreateButton = (id: string) => {
+        let button = container.querySelector<HTMLButtonElement>(`button[data-tapa-id="${id}"]`);
+        if (!button) {
+          button = document.createElement('button');
+          button.type = 'button';
+          button.dataset.tapaId = id;
+          button.className = 'plyr__control tapa-plyr-extra-btn';
+          container.appendChild(button);
+        }
+        return button;
+      };
+
+      const backButton = getOrCreateButton('back');
+      backButton.textContent = '-3s';
+      backButton.title = '后退 3 秒';
+      backButton.setAttribute('aria-label', '后退 3 秒');
+      backButton.onclick = () => seekBySeconds(-3);
+
+      const forwardButton = getOrCreateButton('forward');
+      forwardButton.textContent = '+3s';
+      forwardButton.title = '前进 3 秒';
+      forwardButton.setAttribute('aria-label', '前进 3 秒');
+      forwardButton.onclick = () => seekBySeconds(3);
+
+      const speedButton = getOrCreateButton('speed');
+      speedButton.textContent = `速度 ${playbackRate}x`;
+      speedButton.title = '切换播放速度';
+      speedButton.setAttribute('aria-label', '切换播放速度');
+      speedButton.onclick = () => cycleSpeed();
+
+      const annotationButton = getOrCreateButton('annotation');
+      annotationButton.textContent = '标注';
+      annotationButton.title = '打开标注面板';
+      annotationButton.setAttribute('aria-label', '打开标注面板');
+      annotationButton.onclick = () => openAnnotationPanel();
+      annotationButton.classList.add('tapa-plyr-extra-btn-primary');
+      speedButtonRef.current = speedButton;
+      annotationButtonRef.current = annotationButton;
     };
 
-    const backButton = getOrCreateButton('back');
-    backButton.textContent = '-3s';
-    backButton.title = '后退 3 秒';
-    backButton.setAttribute('aria-label', '后退 3 秒');
-    backButton.onclick = () => seekBySeconds(-3);
-
-    const forwardButton = getOrCreateButton('forward');
-    forwardButton.textContent = '+3s';
-    forwardButton.title = '前进 3 秒';
-    forwardButton.setAttribute('aria-label', '前进 3 秒');
-    forwardButton.onclick = () => seekBySeconds(3);
-
-    const speedButton = getOrCreateButton('speed');
-    speedButton.textContent = `速度 ${playbackRate}x`;
-    speedButton.title = '切换播放速度';
-    speedButton.setAttribute('aria-label', '切换播放速度');
-    speedButton.onclick = () => cycleSpeed();
-
-    const annotationButton = getOrCreateButton('annotation');
-    annotationButton.textContent = '标注';
-    annotationButton.title = '打开标注面板';
-    annotationButton.setAttribute('aria-label', '打开标注面板');
-    annotationButton.onclick = () => openAnnotationPanel();
-    annotationButton.classList.add('tapa-plyr-extra-btn-primary');
-    speedButtonRef.current = speedButton;
-    annotationButtonRef.current = annotationButton;
-  }, [cycleSpeed, openAnnotationPanel, playbackRate, plyrReadySeq, seekBySeconds]);
+    mountControls();
+    return () => {
+      canceled = true;
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [cycleSpeed, openAnnotationPanel, playbackRate, playUrl, seekBySeconds]);
 
   const handleAddVideo = async (event: FormEvent) => {
     event.preventDefault();
