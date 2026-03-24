@@ -58,6 +58,9 @@ const MERGE_THRESHOLD = 0.5;
 const MAX_COMMENT_LENGTH = 1000;
 const ONBOARDING_STORAGE_KEY = 'tapa_onboarding_seen_v1';
 const PLAYBACK_RATE_OPTIONS = [0.2, 0.3, 0.5, 0.75, 1] as const;
+const SPEED_MENU_WIDTH = 120;
+const TAGS_ICON_SVG =
+  "<svg viewBox='0 0 24 24' aria-hidden='true' class='h-4 w-4'><path d='M20 10.5L13.5 4H6v7.5L12.5 18 20 10.5zm-10.5-3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM8 14l4.5 4.5a2 2 0 0 0 2.8 0l5.2-5.2a2 2 0 0 0 0-2.8L16 6' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>";
 
 type OnboardingTargetId = 'video_select' | 'annotation_button' | 'speed_button';
 
@@ -393,6 +396,8 @@ export default function Home() {
   const [isPlayerFullscreen, setIsPlayerFullscreen] = useState(false);
   const [annotationPortalHost, setAnnotationPortalHost] = useState<HTMLElement | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
+  const [speedMenuPosition, setSpeedMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
   const [onboardingCompletedTargets, setOnboardingCompletedTargets] = useState<
@@ -593,11 +598,35 @@ export default function Home() {
     }
   }, []);
 
-  const cycleSpeed = useCallback(() => {
-    const index = PLAYBACK_RATE_OPTIONS.findIndex((rate) => rate === playbackRate);
-    const next = PLAYBACK_RATE_OPTIONS[(index + 1) % PLAYBACK_RATE_OPTIONS.length];
-    setSpeed(next);
-  }, [playbackRate, setSpeed]);
+  const openSpeedMenu = useCallback(() => {
+    const speedButton = speedButtonRef.current;
+    if (!speedButton) {
+      return;
+    }
+    const rect = speedButton.getBoundingClientRect();
+    const left = Math.min(
+      window.innerWidth - SPEED_MENU_WIDTH - 8,
+      Math.max(8, rect.left + rect.width / 2 - SPEED_MENU_WIDTH / 2),
+    );
+    setSpeedMenuPosition({ left, top: Math.max(8, rect.top - 8) });
+    setIsSpeedMenuOpen(true);
+  }, []);
+
+  const toggleSpeedMenu = useCallback(() => {
+    if (isSpeedMenuOpen) {
+      setIsSpeedMenuOpen(false);
+      return;
+    }
+    openSpeedMenu();
+  }, [isSpeedMenuOpen, openSpeedMenu]);
+
+  const handleSelectSpeed = useCallback(
+    (rate: number) => {
+      setSpeed(rate);
+      setIsSpeedMenuOpen(false);
+    },
+    [setSpeed],
+  );
 
   const updateVideoOverlayLayout = useCallback(() => {
     const media = videoRef.current;
@@ -712,6 +741,35 @@ export default function Home() {
     }
   }, [playbackRate]);
 
+  useEffect(() => {
+    if (!isSpeedMenuOpen) {
+      return;
+    }
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) {
+        return;
+      }
+      if (speedButtonRef.current?.contains(target)) {
+        return;
+      }
+      const menu = document.querySelector('.tapa-speed-menu');
+      if (menu?.contains(target)) {
+        return;
+      }
+      setIsSpeedMenuOpen(false);
+    };
+    const onWindowChange = () => openSpeedMenu();
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('resize', onWindowChange);
+    window.addEventListener('scroll', onWindowChange, true);
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('resize', onWindowChange);
+      window.removeEventListener('scroll', onWindowChange, true);
+    };
+  }, [isSpeedMenuOpen, openSpeedMenu]);
+
   const loadPersonCandidatesForTime = useCallback(
     async (currentTime: number) => {
       if (!supabase || !selectedVideoId) {
@@ -778,6 +836,7 @@ export default function Home() {
     setSegmentStart(normalized.start);
     setSegmentEnd(normalized.end);
     setIsPersonPicking(false);
+    setIsSpeedMenuOpen(false);
     setIsAnnotationOpen(true);
     void loadPersonCandidatesForTime(current);
   }, [loadPersonCandidatesForTime]);
@@ -798,7 +857,14 @@ export default function Home() {
       if (!container) {
         container = document.createElement('div');
         container.className = 'tapa-plyr-extra';
-        controls.appendChild(container);
+        const fullscreenButton = controls.querySelector(
+          '.plyr__control[data-plyr="fullscreen"]',
+        ) as HTMLElement | null;
+        if (fullscreenButton) {
+          controls.insertBefore(container, fullscreenButton);
+        } else {
+          controls.appendChild(container);
+        }
       }
 
       const getOrCreateButton = (id: string) => {
@@ -827,19 +893,19 @@ export default function Home() {
 
       const speedButton = getOrCreateButton('speed');
       speedButton.textContent = '\u23F1';
-      speedButton.title = '播放速度 ' + playbackRate + 'x（点击切换）';
-      speedButton.setAttribute('aria-label', '播放速度 ' + playbackRate + 'x');
-      speedButton.onclick = () => cycleSpeed();
+      speedButton.title = '播放速度';
+      speedButton.setAttribute('aria-label', '播放速度');
+      speedButton.onclick = () => toggleSpeedMenu();
       speedButton.classList.add('tapa-plyr-extra-btn-icon');
 
       const annotationButton = getOrCreateButton('annotation');
-      annotationButton.textContent = '\u{1F3F7}';
-      annotationButton.title = '打开标注面板';
-      annotationButton.setAttribute('aria-label', '打开标注面板');
+      annotationButton.innerHTML = TAGS_ICON_SVG;
+      annotationButton.title = '打开标注';
+      annotationButton.setAttribute('aria-label', '打开标注');
       annotationButton.onclick = () => openAnnotationPanel();
       annotationButton.classList.add('tapa-plyr-extra-btn-icon');
+      annotationButton.classList.add('tapa-plyr-extra-btn-icon-svg');
       annotationButton.classList.add('tapa-plyr-extra-btn-primary');
-      speedButtonRef.current = speedButton;
       annotationButtonRef.current = annotationButton;
     };
 
@@ -848,7 +914,7 @@ export default function Home() {
       canceled = true;
       window.cancelAnimationFrame(rafId);
     };
-  }, [cycleSpeed, openAnnotationPanel, playbackRate, playUrl, seekBySeconds]);
+  }, [openAnnotationPanel, playUrl, seekBySeconds, toggleSpeedMenu]);
 
   const handleAddVideo = async (event: FormEvent) => {
     event.preventDefault();
@@ -1611,6 +1677,30 @@ export default function Home() {
               </button>
             </form>
         </div>
+        </div>
+      ) : null}
+
+      {isSpeedMenuOpen && speedMenuPosition ? (
+        <div
+          className='tapa-speed-menu fixed z-[80] w-[120px] rounded-lg border border-zinc-300 bg-white p-1.5 shadow-xl'
+          style={{ left: speedMenuPosition.left, top: speedMenuPosition.top, transform: 'translateY(-100%)' }}
+          role='menu'
+          aria-label='播放速度菜单'
+        >
+          {PLAYBACK_RATE_OPTIONS.map((rate) => (
+            <button
+              key={rate}
+              type='button'
+              role='menuitemradio'
+              aria-checked={playbackRate === rate}
+              className={`block w-full rounded-md px-2 py-1.5 text-left text-sm ${
+                playbackRate === rate ? 'bg-blue-50 text-blue-700' : 'text-zinc-700 hover:bg-zinc-100'
+              }`}
+              onClick={() => handleSelectSpeed(rate)}
+            >
+              {rate}x
+            </button>
+          ))}
         </div>
       ) : null}
 
