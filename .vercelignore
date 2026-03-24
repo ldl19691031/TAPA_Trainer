@@ -1,0 +1,9 @@
+.git
+.next
+.conda-vision
+.venv-vision
+node_modules
+yolov8n-seg.pt
+tmp
+videos
+*.log
