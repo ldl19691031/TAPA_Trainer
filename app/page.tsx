@@ -57,7 +57,8 @@ const MIN_SEGMENT_SECONDS = 2;
 const SNAP_STEP_SECONDS = 0.5;
 const MERGE_THRESHOLD = 0.5;
 const MAX_COMMENT_LENGTH = 1000;
-const ONBOARDING_STORAGE_KEY = 'tapa_onboarding_seen_v1';
+const ONBOARDING_STORAGE_KEY = 'tapa_onboarding_seen_version';
+const ONBOARDING_VERSION = 'v2';
 const PLAYBACK_RATE_OPTIONS = [0.2, 0.3, 0.5, 0.75, 1] as const;
 const SPEED_MENU_WIDTH = 120;
 const TAGS_ICON_SVG =
@@ -1249,10 +1250,11 @@ export default function Home() {
     if (!session) {
       return;
     }
-    const seen = window.localStorage.getItem(ONBOARDING_STORAGE_KEY);
-    if (!seen) {
+    const seenVersion = window.localStorage.getItem(ONBOARDING_STORAGE_KEY);
+    if (seenVersion !== ONBOARDING_VERSION) {
       const timer = window.setTimeout(() => {
         setOnboardingStepIndex(0);
+        setOnboardingCompletedTargets({});
         setIsOnboardingOpen(true);
       }, 0);
       return () => {
@@ -1318,7 +1320,7 @@ export default function Home() {
 
   const finishOnboarding = (markAsSeen: boolean) => {
     if (markAsSeen) {
-      window.localStorage.setItem(ONBOARDING_STORAGE_KEY, '1');
+      window.localStorage.setItem(ONBOARDING_STORAGE_KEY, ONBOARDING_VERSION);
     }
     setIsOnboardingOpen(false);
   };
