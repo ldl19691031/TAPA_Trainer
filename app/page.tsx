@@ -723,7 +723,7 @@ export default function Home() {
     setLoadingPlayUrl(false);
     if (!response.ok || !payload.url) {
       setPlayUrl('');
-      setPlayUrlError(payload.error ?? '?????????');
+      setPlayUrlError(payload.error ?? '生成播放链接失败。');
       return;
     }
     playUrlRecoveryAttemptRef.current = 0;
@@ -758,7 +758,7 @@ export default function Home() {
   const handleSendMagicLink = async (event: FormEvent) => {
     event.preventDefault();
     if (!supabase) {
-      setAuthMessage('?? Supabase ?????');
+      setAuthMessage('缺少 Supabase 环境变量。');
       return;
     }
     if (magicCooldown > 0 || authSending) {
@@ -774,12 +774,12 @@ export default function Home() {
       options: { emailRedirectTo: redirectTo },
     });
     if (error) {
-      setAuthMessage('鍙戦€佸け璐ワ細' + error.message);
+      setAuthMessage('发送失败：' + error.message);
       setAuthSending(false);
       return;
     }
     setMagicCooldown(30);
-    setAuthMessage('Magic Link ??????????');
+    setAuthMessage('Magic Link 已发送，请查收邮箱。');
     setAuthSending(false);
   };
 
@@ -903,7 +903,7 @@ export default function Home() {
   const handleVideoError = useCallback(() => {
     const resumeTime = videoRef.current?.currentTime ?? currentVideoTimeRef.current;
     if (playUrlRecoveryAttemptRef.current >= 2) {
-      setPlayUrlError('??????????????????');
+      setPlayUrlError('视频加载失败，请刷新播放链接后重试。');
       return;
     }
     playUrlRecoveryAttemptRef.current += 1;
@@ -1200,7 +1200,7 @@ export default function Home() {
     const title = videoTitle.trim();
     const storageKey = videoStorageKey.trim();
     if (!title || !storageKey) {
-      setQueryError('????? key ?????');
+      setQueryError('标题和存储 key 为必填项。');
       return;
     }
     const { data, error } = await supabase
@@ -1215,7 +1215,7 @@ export default function Home() {
       .select('id,title,storage_key,source_url,created_by,created_at')
       .single();
     if (error) {
-      setQueryError('???????' + error.message);
+      setQueryError('创建视频失败：' + error.message);
       return;
     }
     const row = data as VideoRow;
@@ -1703,7 +1703,7 @@ export default function Home() {
             <button
               type='button'
               className='pointer-events-auto fixed inset-0'
-              aria-label='??????'
+              aria-label='退出选人模式'
               onClick={() => setIsPersonPicking(false)}
             />
           ) : null}
@@ -1735,15 +1735,15 @@ export default function Home() {
                   selectPersonCandidate(candidate);
                   setIsPersonPicking(false);
                 }}
-                aria-label={'???????? ' + candidate.trackId}
-                title={'???? #' + candidate.trackId}
+                aria-label={'在视频中选择轨迹 ' + candidate.trackId}
+                title={'选择轨迹 #' + candidate.trackId}
               >
                 <span
                   className={`absolute left-1 top-1 rounded px-1 text-[10px] font-semibold ${
                     selected ? 'bg-blue-600 text-white' : 'bg-black/70 text-white'
                   }`}
                 >
-                  {selected ? '?? #' + candidate.trackId : '#' + candidate.trackId}
+                  {selected ? '已选 #' + candidate.trackId : '#' + candidate.trackId}
                 </span>
               </button>
             );
@@ -1773,13 +1773,13 @@ export default function Home() {
           aria-modal='true'
         >
           <div className='mb-3 flex items-center justify-between'>
-            <h2 className='text-base font-semibold text-zinc-900'>??</h2>
+            <h2 className='text-base font-semibold text-zinc-900'>{'\u6807\u6ce8'}</h2>
             <button
               className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
               onClick={() => setIsAnnotationOpen(false)}
               type='button'
-              aria-label='??'
-              title='??'
+              aria-label='关闭'
+              title='关闭'
             >
               <IconClose />
             </button>
@@ -1829,13 +1829,13 @@ export default function Home() {
                 disabled={isLoadingPersonCandidates}
                 onClick={() => void loadPersonCandidatesForTime(videoRef.current?.currentTime ?? currentVideoTime)}
               >
-                {isLoadingPersonCandidates ? '???...' : '????'}
+                {isLoadingPersonCandidates ? '读取中...' : '刷新候选'}
               </button>
             </div>
 
             {!quickMode ? (
               <label className='text-sm text-zinc-700'>
-                ??
+                {'\u8bc4\u8bba'}
                 <textarea
                   className='mt-1 h-24 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
                   maxLength={MAX_COMMENT_LENGTH}
@@ -1852,8 +1852,8 @@ export default function Home() {
                 className={`inline-flex h-10 w-10 items-center justify-center rounded-md border text-zinc-700 ${
                   isPersonPicking ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-zinc-300 hover:bg-zinc-50'
                 }`}
-                title='??????'
-                aria-label='??????'
+                title='选择标注对象'
+                aria-label='选择标注对象'
                 onClick={() => void startPersonPicking()}
               >
                 <IconUserTag />
@@ -1905,11 +1905,11 @@ export default function Home() {
     return (
       <main className='mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-4 py-10'>
         <section className='w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-sm'>
-          <h1 className='text-xl font-semibold text-zinc-900'>????</h1>
-          <p className='mt-2 text-sm text-zinc-600'>?? Magic Link ????????????</p>
+          <h1 className='text-xl font-semibold text-zinc-900'>{'\u9a71\u529b\u8bad\u7ec3'}</h1>
+          <p className='mt-2 text-sm text-zinc-600'>{'\u4f7f\u7528 Magic Link \u767b\u5f55\uff0c\u767b\u5f55\u540e\u4f1a\u4fdd\u6301\u4f1a\u8bdd\u3002'}</p>
           {!envReady ? (
             <p className='mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
-              ?? NEXT_PUBLIC_SUPABASE_URL ? NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?            </p>
+              {'\u7f3a\u5c11 NEXT_PUBLIC_SUPABASE_URL \u6216 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY\u3002'}            </p>
           ) : null}
           <form className='mt-4 space-y-3' onSubmit={handleSendMagicLink}>
             <input
@@ -1926,10 +1926,10 @@ export default function Home() {
               disabled={authSending || magicCooldown > 0}
             >
               {authSending
-                ? '???...'
+                ? '\u53d1\u9001\u4e2d...'
                 : magicCooldown > 0
-                  ? magicCooldown + 's ???'
-                  : '?? Magic Link'}
+                  ? magicCooldown + 's ' + '\u540e\u91cd\u8bd5'
+                  : '\u53d1\u9001 Magic Link'}
             </button>
           </form>
           {authMessage ? <p className='mt-3 text-sm text-zinc-700'>{authMessage}</p> : null}
@@ -2057,19 +2057,19 @@ export default function Home() {
                   setIsMyAnnotationsOpen(false);
                 }}
                 type='button'
-                aria-label='??????'
-                title='??????'
+                aria-label='关闭标注侧栏'
+                title='关闭标注侧栏'
               >
                 <IconClose />
               </button>
             </div>
             <p className='mb-3 text-sm text-zinc-600'>
-              ?????{selectedVideo?.title ?? '?????'}
+              {'\u5f53\u524d\u89c6\u9891\uff1a'}{selectedVideo?.title ?? '\u672a\u9009\u62e9\u89c6\u9891'}
             </p>
             <div className='space-y-3'>
               {currentVideoMyAnnotations.length === 0 ? (
                 <p className='rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500'>
-                  ????????????                </p>
+                  {'\u5f53\u524d\u89c6\u9891\u8fd8\u6ca1\u6709\u4f60\u7684\u6807\u6ce8\u3002'}                </p>
               ) : (
                 currentVideoMyAnnotations.map((item, index) => (
                   <article
@@ -2080,14 +2080,14 @@ export default function Home() {
                       markOnboardingAction('annotation_card');
                       seekToTime(item.start_sec);
                     }}
-                    title={`??? ${formatSeconds(item.start_sec)}`}
+                    title={`${'\u8df3\u8f6c\u5230 '} ${formatSeconds(item.start_sec)}`}
                   >
                     <button
                       ref={index === 0 ? firstAnnotationActionButtonRef : null}
                       type='button'
                       className='absolute right-2 top-2 z-10 inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-white/90 px-2 text-zinc-700 shadow-sm hover:bg-white'
-                      aria-label='??????'
-                      title='????'
+                      aria-label='标注操作菜单'
+                      title='标注修订'
                       onMouseEnter={() => setHoveredAnnotationActionId(item.id)}
                       onMouseLeave={() =>
                         setHoveredAnnotationActionId((current) =>
@@ -2101,7 +2101,7 @@ export default function Home() {
                       }}
                     >
                       {hoveredAnnotationActionId === item.id ? (
-                         <span className='text-[11px] font-medium'>????</span>
+                         <span className='text-[11px] font-medium'>{'\u6807\u6ce8\u4fee\u8ba2'}</span>
                       ) : (
                         <IconMoreVertical />
                       )}
@@ -2116,27 +2116,27 @@ export default function Home() {
                           className='block w-full rounded px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100'
                           onClick={() => startEditAnnotation(item)}
                         >
-                          ??
+                          {'\u7f16\u8f91'}
                         </button>
                         <button
                           type='button'
                           className='block w-full rounded px-2 py-1.5 text-left text-sm text-red-600 hover:bg-red-50'
                           onClick={() => void handleDeleteAnnotation(item.id)}
                         >
-                          ??
+                          {'\u5220\u9664'}
                         </button>
                       </div>
                     ) : null}
                     {item.thumb_base64 ? (
                       <img
                         src={item.thumb_base64}
-                        alt='?????'
+                        alt='标注缩略图'
                         className='h-28 w-full object-cover'
                         loading='lazy'
                       />
                     ) : (
                       <div className='flex h-28 w-full items-center justify-center bg-zinc-100 text-xs text-zinc-500'>
-                          ????
+                          {'\u65e0\u7f29\u7565\u56fe'}
                       </div>
                     )}
                     <div className='border-t border-zinc-100 px-3 py-2'>
@@ -2158,34 +2158,34 @@ export default function Home() {
         <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
           <div className='ml-auto h-full w-full max-w-sm overflow-y-auto bg-white p-5 shadow-2xl'>
             <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>????</h2>
+              <h2 className='text-base font-semibold text-zinc-900'>{'\u66f4\u591a\u9009\u9879'}</h2>
               <button
                 className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
                 onClick={() => setIsMenuOpen(false)}
                 type='button'
-                aria-label='????'
-                title='????'
+                aria-label='关闭菜单'
+                title='关闭菜单'
               >
                 <IconClose />
               </button>
             </div>
 
             <section className='mb-4 rounded-lg border border-zinc-200 p-3'>
-              <p className='mb-2 text-xs font-medium text-zinc-600'>??</p>
+              <p className='mb-2 text-xs font-medium text-zinc-600'>{'\u6a21\u5f0f'}</p>
               <div className='inline-flex rounded-md border border-zinc-300 p-1'>
                 <button
                   type='button'
                   onClick={() => setMode('practice')}
                   className={'rounded px-2 py-1 text-xs ' + (mode === 'practice' ? 'bg-zinc-900 text-white' : 'text-zinc-700')}
                 >
-                  ??
+                  {'\u7ec3\u4e60'}
                 </button>
                 <button
                   type='button'
                   onClick={() => setMode('supervision')}
                   className={'rounded px-2 py-1 text-xs ' + (mode === 'supervision' ? 'bg-zinc-900 text-white' : 'text-zinc-700')}
                 >
-                  ??
+                  {'\u7763\u5bfc'}
                 </button>
               </div>
               <label className='mt-3 flex items-center gap-2 text-sm text-zinc-700'>
@@ -2194,7 +2194,7 @@ export default function Home() {
                   checked={quickMode}
                   onChange={(event) => setQuickMode(event.target.checked)}
                 />
-                ????              </label>
+                {'\u5feb\u901f\u6a21\u5f0f'}              </label>
             </section>
 
             <div className='grid gap-2'>
@@ -2207,7 +2207,7 @@ export default function Home() {
                 }}
               >
                 <IconRefresh />
-                ??????
+                {'\u5237\u65b0\u64ad\u653e\u94fe\u63a5'}
               </button>
               <button
                 className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
@@ -2218,7 +2218,7 @@ export default function Home() {
                 }}
               >
                 <IconFolder />
-                ??????
+                {'\u89c6\u9891\u5e93\u4e0e\u63d0\u4ea4'}
               </button>
               <button
                 className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
@@ -2229,7 +2229,7 @@ export default function Home() {
                 }}
               >
                 <IconHelp />
-                ??
+                {'\u5e2e\u52a9'}
               </button>
               <button
                 className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
@@ -2237,7 +2237,7 @@ export default function Home() {
                 onClick={handleSignOut}
               >
                 <IconSignOut />
-                ??
+                {'\u767b\u51fa'}
               </button>
             </div>
           </div>
@@ -2248,17 +2248,17 @@ export default function Home() {
         <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
           <div className='ml-auto h-full w-full max-w-xl overflow-y-auto bg-white p-5 shadow-2xl'>
             <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-lg font-semibold text-zinc-900'>???</h2>
+              <h2 className='text-lg font-semibold text-zinc-900'>{'\u89c6\u9891\u5e93'}</h2>
               <button
                 className='rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-50'
                 onClick={() => setIsLibraryOpen(false)}
                 type='button'
               >
-                ??
+                {'\u5173\u95ed'}
               </button>
             </div>
             <label className='text-sm text-zinc-700'>
-              ????
+              {'\u9009\u62e9\u89c6\u9891'}
               <select
                 className='mt-1 w-full rounded-md border border-zinc-300 px-2 py-2 text-sm'
                 value={selectedVideo?.id ?? ''}
@@ -2269,7 +2269,7 @@ export default function Home() {
               >
                 {videos.map((video) => (
                   <option key={video.id} value={video.id}>
-                    {video.title} [{video.storage_key ?? '??? key'}]
+                    {video.title} [{video.storage_key ?? '\u672a\u914d\u7f6e key'}]
                   </option>
                 ))}
               </select>
@@ -2277,25 +2277,25 @@ export default function Home() {
 
             <div className='my-4 border-t border-zinc-200' />
 
-            <h3 className='text-base font-semibold text-zinc-900'>??????</h3>
+            <h3 className='text-base font-semibold text-zinc-900'>{'\u65b0\u589e\u6258\u7ba1\u89c6\u9891'}</h3>
             <form className='mt-3 grid gap-3' onSubmit={handleAddVideo}>
               <input
                 className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-                placeholder='??'
+                placeholder='标题'
                 required
                 value={videoTitle}
                 onChange={(event) => setVideoTitle(event.target.value)}
               />
               <input
                 className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-                placeholder='?? key??? videos/sample-001.mp4'
+                placeholder='存储 key，例如 videos/sample-001.mp4'
                 required
                 value={videoStorageKey}
                 onChange={(event) => setVideoStorageKey(event.target.value)}
               />
               <input
                 className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-                placeholder='???? URL????'
+                placeholder='原始来源 URL（可选）'
                 value={videoSourceUrl}
                 onChange={(event) => setVideoSourceUrl(event.target.value)}
               />
@@ -2303,7 +2303,7 @@ export default function Home() {
                 className='rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white'
                 type='submit'
               >
-                ??????
+                {'\u4fdd\u5b58\u89c6\u9891\u4fe1\u606f'}
               </button>
             </form>
         </div>
@@ -2315,7 +2315,7 @@ export default function Home() {
           className='tapa-speed-menu fixed z-[80] w-[120px] rounded-lg border border-zinc-300 bg-white p-1.5 shadow-xl'
           style={{ left: speedMenuPosition.left, top: speedMenuPosition.top, transform: 'translateY(-100%)' }}
           role='menu'
-          aria-label='??????'
+          aria-label='播放速度菜单'
         >
           {PLAYBACK_RATE_OPTIONS.map((rate) => (
             <button
