@@ -2210,24 +2210,20 @@ export default function Home() {
             }
           >
             <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>{'\u9996\u6b21\u4f7f\u7528\u5f15\u5bfc'}</h2>
+              <h2 className='text-base font-semibold text-zinc-900'>首次使用引导</h2>
               <button
                 type='button'
                 onClick={() => finishOnboarding(true)}
                 className='inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
-                title='\u5173\u95ed\u5f15\u5bfc'
-                aria-label='\u5173\u95ed\u5f15\u5bfc'
+                title='关闭引导'
+                aria-label='关闭引导'
               >
                 <IconClose />
               </button>
             </div>
 
             <p className='mb-2 text-xs text-zinc-500'>
-              {'\u7b2c '}
-              {onboardingStepIndex + 1}
-              {' / '}
-              {ONBOARDING_STEPS.length}
-              {' \u6b65'}
+              第 {onboardingStepIndex + 1} / {ONBOARDING_STEPS.length} 步
             </p>
             <h3 className='text-lg font-semibold text-zinc-900'>{currentOnboardingStep.title}</h3>
             <p className='mt-2 text-sm leading-6 text-zinc-700'>
@@ -2245,7 +2241,7 @@ export default function Home() {
                 onClick={() => finishOnboarding(true)}
                 className='text-sm text-zinc-500 hover:text-zinc-700'
               >
-                {'\u8df3\u8fc7\u5f15\u5bfc'}
+                跳过引导
               </button>
               <div className='flex items-center gap-2'>
                 <button
@@ -2254,7 +2250,7 @@ export default function Home() {
                   disabled={onboardingStepIndex === 0}
                   className='rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 disabled:opacity-40'
                 >
-                  {'\u4e0a\u4e00\u6b65'}
+                  上一步
                 </button>
                 <button
                   type='button'
@@ -2262,7 +2258,7 @@ export default function Home() {
                   disabled={!isCurrentStepActionDone}
                   className='rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40'
                 >
-                  {onboardingStepIndex === ONBOARDING_STEPS.length - 1 ? '\u5b8c\u6210' : '\u4e0b\u4e00\u6b65'}
+                  {onboardingStepIndex === ONBOARDING_STEPS.length - 1 ? '完成' : '下一步'}
                 </button>
               </div>
             </div>
