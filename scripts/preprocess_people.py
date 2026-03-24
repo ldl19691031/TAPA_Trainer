@@ -23,6 +23,7 @@ import json
 import math
 import subprocess
 import time
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -31,7 +32,6 @@ import tempfile
 import cv2  # type: ignore
 import numpy as np
 import requests
-from ultralytics import YOLO  # type: ignore
 
 
 @dataclass
@@ -144,7 +144,7 @@ def clamp01(value: float) -> float:
   return float(value)
 
 
-def extract_detections(result, frame_width: int, frame_height: int, min_score: float) -> list[Detection]:
+def extract_detections_yolo(result, frame_width: int, frame_height: int, min_score: float) -> list[Detection]:
   detections: list[Detection] = []
   boxes = result.boxes
   masks = result.masks
@@ -184,6 +184,35 @@ def extract_detections(result, frame_width: int, frame_height: int, min_score: f
   return detections
 
 
+def extract_detections_hog(
+  frame: np.ndarray,
+  frame_width: int,
+  frame_height: int,
+  min_score: float,
+) -> list[Detection]:
+  hog = cv2.HOGDescriptor()
+  hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+  rects, weights = hog.detectMultiScale(
+    frame, winStride=(8, 8), padding=(8, 8), scale=1.03
+  )
+  detections: list[Detection] = []
+  for (x, y, w, h), score in zip(rects, weights):
+    score_value = float(score)
+    if score_value < min_score:
+      continue
+    detections.append(
+      Detection(
+        left=clamp01(float(x) / frame_width),
+        top=clamp01(float(y) / frame_height),
+        width=clamp01(float(w) / frame_width),
+        height=clamp01(float(h) / frame_height),
+        score=min(1.0, max(0.0, score_value)),
+        polygon=None,
+      )
+    )
+  return detections
+
+
 def extract_sampled_frames_ffmpeg(
   video_path: Path,
   sample_fps: float,
@@ -214,7 +243,7 @@ def extract_sampled_frames_ffmpeg(
       ts_sec = start_sec + (index / sample_fps)
       stable_copy = video_path.parent / ".tapa_tmp_frames" / frame_path.name
       stable_copy.parent.mkdir(parents=True, exist_ok=True)
-      frame_path.replace(stable_copy)
+      shutil.copy2(frame_path, stable_copy)
       extracted.append((stable_copy, ts_sec))
     return extracted
 
@@ -296,6 +325,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--video-path", required=True, help="Absolute path to local mp4 file")
   parser.add_argument("--video-id", required=True, help="videos.id in Supabase")
   parser.add_argument("--model", default="yolov8n-seg.pt", help="Ultralytics segmentation model")
+  parser.add_argument("--backend", choices=["yolo", "hog"], default="yolo", help="Detection backend")
   parser.add_argument("--sample-fps", type=float, default=2.0, help="Sampling FPS for analysis")
   parser.add_argument("--start-sec", type=float, default=0.0, help="Optional start second")
   parser.add_argument("--end-sec", type=float, default=-1.0, help="Optional end second")
@@ -324,7 +354,17 @@ def main() -> None:
   if not frame_items:
     raise RuntimeError("No frames extracted. Check video path and time range.")
 
-  model = YOLO(args.model)
+  model = None
+  if args.backend == "yolo":
+    try:
+      from ultralytics import YOLO  # type: ignore
+
+      model = YOLO(args.model)
+    except Exception as exc:  # pragma: no cover
+      raise RuntimeError(
+        f"Failed to initialize YOLO backend ({exc}). "
+        "Use --backend hog as a fallback."
+      ) from exc
   tracker = IoUTracker()
   rows: list[dict] = []
 
@@ -335,13 +375,21 @@ def main() -> None:
       frame = cv2.imread(str(frame_path))
       if frame is None:
         continue
-      result = model.predict(frame, verbose=False)[0]
-      detections = extract_detections(
-        result=result,
-        frame_width=frame.shape[1],
-        frame_height=frame.shape[0],
-        min_score=args.min_score,
-      )
+      if args.backend == "yolo":
+        result = model.predict(frame, verbose=False)[0]
+        detections = extract_detections_yolo(
+          result=result,
+          frame_width=frame.shape[1],
+          frame_height=frame.shape[0],
+          min_score=args.min_score,
+        )
+      else:
+        detections = extract_detections_hog(
+          frame=frame,
+          frame_width=frame.shape[1],
+          frame_height=frame.shape[0],
+          min_score=args.min_score,
+        )
       assignments = tracker.update(detections)
       for track_id, det in assignments:
         rows.append(

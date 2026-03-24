@@ -369,7 +369,6 @@ export default function Home() {
   const [selectedPersonBox, setSelectedPersonBox] = useState<NormalizedBox | null>(null);
   const [selectedPersonTsSec, setSelectedPersonTsSec] = useState<number | null>(null);
   const [isLoadingPersonCandidates, setIsLoadingPersonCandidates] = useState(false);
-  const [personCandidateMessage, setPersonCandidateMessage] = useState('');
 
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
@@ -409,7 +408,6 @@ export default function Home() {
     setSelectedPersonTrackId(null);
     setSelectedPersonBox(null);
     setSelectedPersonTsSec(null);
-    setPersonCandidateMessage('');
   }, [selectedVideoId]);
 
   useEffect(() => {
@@ -685,7 +683,6 @@ export default function Home() {
         return;
       }
       setIsLoadingPersonCandidates(true);
-      setPersonCandidateMessage('');
       const result = await loadPersonFrameRows(supabase, selectedVideoId, currentTime);
       setIsLoadingPersonCandidates(false);
       if (result.error) {
@@ -693,7 +690,7 @@ export default function Home() {
         setSelectedPersonTrackId(null);
         setSelectedPersonBox(null);
         setSelectedPersonTsSec(null);
-        setPersonCandidateMessage(result.error);
+        setQueryError(result.error);
         return;
       }
 
@@ -703,7 +700,6 @@ export default function Home() {
         setSelectedPersonTrackId(null);
         setSelectedPersonBox(null);
         setSelectedPersonTsSec(null);
-        setPersonCandidateMessage('当前时刻附近没有离线人体候选，可直接保存驱力标注。');
         return;
       }
 
@@ -712,14 +708,12 @@ export default function Home() {
         setSelectedPersonTrackId(only.trackId);
         setSelectedPersonBox(only.box);
         setSelectedPersonTsSec(only.tsSec);
-        setPersonCandidateMessage('已自动选中 1 个候选人体。');
         return;
       }
 
       setSelectedPersonTrackId(null);
       setSelectedPersonBox(null);
       setSelectedPersonTsSec(null);
-      setPersonCandidateMessage(`检测到 ${candidates.length} 个人体候选，请选择目标。`);
     },
     [selectedVideoId, supabase],
   );
@@ -1422,33 +1416,9 @@ export default function Home() {
                     {isLoadingPersonCandidates ? '读取中...' : '刷新候选'}
                   </button>
                 </div>
-                {personCandidateMessage ? (
-                  <p className='mb-2 text-xs text-zinc-600'>{personCandidateMessage}</p>
-                ) : null}
-                {personCandidates.length > 0 ? (
-                  <div className='mt-1 flex flex-wrap gap-1.5'>
-                    {personCandidates.map((candidate) => {
-                      const selected = candidate.trackId === selectedPersonTrackId;
-                      return (
-                        <button
-                          key={`person-chip-${candidate.trackId}`}
-                          type='button'
-                          className={`rounded-full border px-2 py-1 text-[11px] ${
-                            selected
-                              ? 'border-blue-600 bg-blue-50 text-blue-700'
-                              : 'border-zinc-300 bg-white text-zinc-700'
-                          }`}
-                          onClick={() => selectPersonCandidate(candidate)}
-                        >
-                          轨迹 #{candidate.trackId} · t={candidate.tsSec.toFixed(1)}s ·{' '}
-                          {(candidate.score * 100).toFixed(0)}%
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className='text-xs text-zinc-500'>当前时间未找到离线人体候选，仍可只记录驱力与时间片段。</p>
-                )}
+                <p className='text-xs text-zinc-500'>
+                  可直接点击视频画面中的人体框选择对象；若当前时刻没有候选，仍可只记录驱力与时间片段。
+                </p>
               </section>
 
               <label className='flex items-center gap-2 text-sm text-zinc-700'>
