@@ -744,41 +744,45 @@ export default function Home() {
       container.className = 'tapa-plyr-extra';
       controls.appendChild(container);
     }
-    container.replaceChildren();
 
-    const createButton = (label: string, title: string, onClick: () => void) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'plyr__control tapa-plyr-extra-btn';
-      button.textContent = label;
-      button.title = title;
-      button.setAttribute('aria-label', title);
-      button.addEventListener('click', onClick);
+    const getOrCreateButton = (id: string) => {
+      let button = container.querySelector<HTMLButtonElement>(`button[data-tapa-id="${id}"]`);
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.tapaId = id;
+        button.className = 'plyr__control tapa-plyr-extra-btn';
+        container.appendChild(button);
+      }
       return button;
     };
 
-    const backButton = createButton('-3s', '后退 3 秒', () => seekBySeconds(-3));
-    const forwardButton = createButton('+3s', '前进 3 秒', () => seekBySeconds(3));
-    const speedButton = createButton(`速度 ${playbackRate}x`, '切换播放速度', () => {
-      cycleSpeed();
-    });
-    const annotationButton = createButton('标注', '打开标注面板', () => {
-      openAnnotationPanel();
-    });
-    annotationButton.classList.add('tapa-plyr-extra-btn-primary');
+    const backButton = getOrCreateButton('back');
+    backButton.textContent = '-3s';
+    backButton.title = '后退 3 秒';
+    backButton.setAttribute('aria-label', '后退 3 秒');
+    backButton.onclick = () => seekBySeconds(-3);
 
-    container.append(backButton, forwardButton, speedButton, annotationButton);
+    const forwardButton = getOrCreateButton('forward');
+    forwardButton.textContent = '+3s';
+    forwardButton.title = '前进 3 秒';
+    forwardButton.setAttribute('aria-label', '前进 3 秒');
+    forwardButton.onclick = () => seekBySeconds(3);
+
+    const speedButton = getOrCreateButton('speed');
+    speedButton.textContent = `速度 ${playbackRate}x`;
+    speedButton.title = '切换播放速度';
+    speedButton.setAttribute('aria-label', '切换播放速度');
+    speedButton.onclick = () => cycleSpeed();
+
+    const annotationButton = getOrCreateButton('annotation');
+    annotationButton.textContent = '标注';
+    annotationButton.title = '打开标注面板';
+    annotationButton.setAttribute('aria-label', '打开标注面板');
+    annotationButton.onclick = () => openAnnotationPanel();
+    annotationButton.classList.add('tapa-plyr-extra-btn-primary');
     speedButtonRef.current = speedButton;
     annotationButtonRef.current = annotationButton;
-
-    return () => {
-      backButton.remove();
-      forwardButton.remove();
-      speedButton.remove();
-      annotationButton.remove();
-      speedButtonRef.current = null;
-      annotationButtonRef.current = null;
-    };
   }, [cycleSpeed, openAnnotationPanel, playbackRate, plyrReadySeq, seekBySeconds]);
 
   const handleAddVideo = async (event: FormEvent) => {
