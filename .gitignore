@@ -48,10 +48,10 @@ __pycache__/
 yolov8n-seg.pt
 
 # local heavy assets (avoid accidental commit)
-tmp/
-videos/
-models/
-checkpoints/
+/tmp/
+/videos/
+/models/
+/checkpoints/
 *.onnx
 *.pt
 *.pth

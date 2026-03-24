@@ -5,9 +5,10 @@
 node_modules
 yolov8n-seg.pt
 tmp
-videos
-models
-checkpoints
+/tmp
+/videos
+/models
+/checkpoints
 *.onnx
 *.pt
 *.pth
