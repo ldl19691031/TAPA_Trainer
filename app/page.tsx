@@ -1872,6 +1872,7 @@ export default function Home() {
           }
         }}
         onDelete={(annotationId) => void handleDeleteAnnotation(annotationId)}
+        onDismissActionMenu={() => setOpenAnnotationActionId(null)}
         formatSeconds={formatSeconds}
       />
 

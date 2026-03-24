@@ -24,6 +24,7 @@ type MyAnnotationsDrawerProps = {
   onActionToggle: (annotationId: string) => void;
   onEdit: (annotationId: string) => void;
   onDelete: (annotationId: string) => void;
+  onDismissActionMenu: () => void;
   formatSeconds: (value: number) => string;
 };
 
@@ -44,6 +45,7 @@ export function MyAnnotationsDrawer({
   onActionToggle,
   onEdit,
   onDelete,
+  onDismissActionMenu,
   formatSeconds,
 }: MyAnnotationsDrawerProps) {
   if (!isOpen) {
@@ -52,7 +54,10 @@ export function MyAnnotationsDrawer({
 
   return (
     <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
-      <div className='ml-auto h-full w-full max-w-md overflow-y-auto bg-white p-5 shadow-2xl'>
+      <div
+        className='ml-auto h-full w-full max-w-md overflow-y-auto bg-white p-5 shadow-2xl'
+        onClick={onDismissActionMenu}
+      >
         <div className='mb-4 flex items-center justify-between'>
           <h2 className='text-base font-semibold text-zinc-900'>{'\u6211\u7684\u6807\u6ce8'}</h2>
           <button
@@ -80,7 +85,10 @@ export function MyAnnotationsDrawer({
                 ref={index === 0 ? firstCardRef : null}
                 key={item.id}
                 className='group relative cursor-pointer overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:border-blue-300 hover:shadow-md'
-                onClick={() => onCardClick(item.id, item.start_sec)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onCardClick(item.id, item.start_sec);
+                }}
                 title={`${'\u8df3\u8f6c\u5230 '} ${formatSeconds(item.start_sec)}`}
               >
                 <button
