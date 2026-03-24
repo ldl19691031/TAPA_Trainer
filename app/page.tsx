@@ -509,6 +509,7 @@ export default function Home() {
   const [isMyAnnotationsOpen, setIsMyAnnotationsOpen] = useState(false);
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [openAnnotationActionId, setOpenAnnotationActionId] = useState<string | null>(null);
+  const [hoveredAnnotationActionId, setHoveredAnnotationActionId] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
   const [isPersonPicking, setIsPersonPicking] = useState(false);
@@ -517,6 +518,7 @@ export default function Home() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
   const [speedMenuPosition, setSpeedMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [pendingPlaybackResumeSec, setPendingPlaybackResumeSec] = useState<number | null>(null);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
   const [onboardingCompletedTargets, setOnboardingCompletedTargets] = useState<
@@ -555,6 +557,7 @@ export default function Home() {
   const articleRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<Plyr | null>(null);
+  const playUrlRecoveryAttemptRef = useRef(0);
   const [videoOverlayLayout, setVideoOverlayLayout] = useState<VideoOverlayLayout | null>(null);
 
   const markOnboardingAction = useCallback((targetId: OnboardingTargetId) => {
@@ -579,6 +582,11 @@ export default function Home() {
     setSelectedPersonBox(null);
     setSelectedPersonTsSec(null);
     setIsPersonPicking(false);
+    setIsAnnotationOpen(false);
+    setIsSpeedMenuOpen(false);
+    setAnnotationPortalHost(null);
+    setPendingPlaybackResumeSec(null);
+    playUrlRecoveryAttemptRef.current = 0;
   }, [selectedVideoId]);
 
   useEffect(() => {
@@ -666,9 +674,12 @@ export default function Home() {
     };
   }, [selectedVideoId, session, supabase]);
 
-  const refreshPlayUrl = useCallback(async () => {
+  const refreshPlayUrl = useCallback(async (resumeTimeSec?: number) => {
     if (!session || !selectedVideoId) {
       return;
+    }
+    if (typeof resumeTimeSec === 'number') {
+      setPendingPlaybackResumeSec(resumeTimeSec);
     }
     setLoadingPlayUrl(true);
     setPlayUrlError('');
@@ -683,6 +694,7 @@ export default function Home() {
       setPlayUrlError(payload.error ?? '生成播放链接失败。');
       return;
     }
+    playUrlRecoveryAttemptRef.current = 0;
     setPlayUrl(payload.url);
   }, [selectedVideoId, session]);
 
@@ -697,6 +709,19 @@ export default function Home() {
       window.clearTimeout(timer);
     };
   }, [refreshPlayUrl, selectedVideoId, session]);
+
+  useEffect(() => {
+    if (!session || !selectedVideoId || !playUrl) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      const resumeTime = videoRef.current?.currentTime ?? currentVideoTime;
+      void refreshPlayUrl(resumeTime);
+    }, 8 * 60 * 1000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [currentVideoTime, playUrl, refreshPlayUrl, selectedVideoId, session]);
 
   const handleSendMagicLink = async (event: FormEvent) => {
     event.preventDefault();
@@ -859,7 +884,11 @@ export default function Home() {
     return () => {
       canceled = true;
       if (localPlayer) {
-        localPlayer.destroy();
+        try {
+          localPlayer.destroy();
+        } catch (error) {
+          console.warn('Plyr destroy failed during source switch.', error);
+        }
       }
       if (playerRef.current === localPlayer) {
         playerRef.current = null;
@@ -1140,6 +1169,31 @@ export default function Home() {
     videoRef.current.currentTime = Math.max(0, Number(seconds) || 0);
     setCurrentVideoTime(videoRef.current.currentTime);
   };
+
+  const handleVideoLoadedMetadata = useCallback(() => {
+    updateVideoOverlayLayout();
+    if (pendingPlaybackResumeSec === null || !videoRef.current) {
+      return;
+    }
+    const duration = Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 0;
+    const target =
+      duration > 0
+        ? Math.max(0, Math.min(pendingPlaybackResumeSec, Math.max(0, duration - 0.1)))
+        : Math.max(0, pendingPlaybackResumeSec);
+    videoRef.current.currentTime = target;
+    setCurrentVideoTime(target);
+    setPendingPlaybackResumeSec(null);
+  }, [pendingPlaybackResumeSec, updateVideoOverlayLayout]);
+
+  const handleVideoError = useCallback(() => {
+    const resumeTime = videoRef.current?.currentTime ?? currentVideoTime;
+    if (playUrlRecoveryAttemptRef.current >= 2) {
+      setPlayUrlError('视频加载失败，请刷新播放链接后重试。');
+      return;
+    }
+    playUrlRecoveryAttemptRef.current += 1;
+    void refreshPlayUrl(resumeTime);
+  }, [currentVideoTime, refreshPlayUrl]);
 
   const startEditAnnotation = (item: AnnotationRow) => {
     setEditingAnnotationId(item.id);
@@ -1895,7 +1949,8 @@ export default function Home() {
                 crossOrigin='anonymous'
                 playsInline
                 preload='metadata'
-                onLoadedMetadata={updateVideoOverlayLayout}
+                onLoadedMetadata={handleVideoLoadedMetadata}
+                onError={handleVideoError}
                 onTimeUpdate={(event) => setCurrentVideoTime(event.currentTarget.currentTime)}
                 className='h-[calc(100vh-92px)] w-full bg-black'
               />
@@ -1977,14 +2032,25 @@ export default function Home() {
                   >
                     <button
                       type='button'
-                      className='absolute right-2 top-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-zinc-700 shadow-sm hover:bg-white'
+                      className='absolute right-2 top-2 z-10 inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-white/90 px-2 text-zinc-700 shadow-sm hover:bg-white'
                       aria-label='标注操作菜单'
+                      title='标注修订'
+                      onMouseEnter={() => setHoveredAnnotationActionId(item.id)}
+                      onMouseLeave={() =>
+                        setHoveredAnnotationActionId((current) =>
+                          current === item.id ? null : current,
+                        )
+                      }
                       onClick={(event) => {
                         event.stopPropagation();
                         setOpenAnnotationActionId((current) => (current === item.id ? null : item.id));
                       }}
                     >
-                      <IconMoreVertical />
+                      {hoveredAnnotationActionId === item.id ? (
+                        <span className='text-[11px] font-medium'>标注修订</span>
+                      ) : (
+                        <IconMoreVertical />
+                      )}
                     </button>
                     {openAnnotationActionId === item.id ? (
                       <div
@@ -2215,7 +2281,9 @@ export default function Home() {
         </div>
       ) : null}
 
-      {annotationPortalHost ? createPortal(annotationOverlay, annotationPortalHost) : annotationOverlay}
+      {annotationPortalHost && annotationPortalHost.isConnected
+        ? createPortal(annotationOverlay, annotationPortalHost)
+        : annotationOverlay}
 
       {isOnboardingOpen ? (
         <div className='pointer-events-none fixed inset-0 z-[120] p-4' role='dialog' aria-modal='true'>
