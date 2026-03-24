@@ -559,6 +559,8 @@ export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<Plyr | null>(null);
   const playUrlRecoveryAttemptRef = useRef(0);
+  const currentVideoTimeRef = useRef(0);
+  const pendingPlaybackResumeSecRef = useRef<number | null>(null);
   const [videoOverlayLayout, setVideoOverlayLayout] = useState<VideoOverlayLayout | null>(null);
 
   const markOnboardingAction = useCallback((targetId: OnboardingTargetId) => {
@@ -576,6 +578,14 @@ export default function Home() {
     () => videos.find((video) => video.id === selectedVideoId) ?? null,
     [selectedVideoId, videos],
   );
+
+  useEffect(() => {
+    currentVideoTimeRef.current = currentVideoTime;
+  }, [currentVideoTime]);
+
+  useEffect(() => {
+    pendingPlaybackResumeSecRef.current = pendingPlaybackResumeSec;
+  }, [pendingPlaybackResumeSec]);
 
   useEffect(() => {
     setPersonCandidates([]);
@@ -680,6 +690,7 @@ export default function Home() {
       return;
     }
     if (typeof resumeTimeSec === 'number') {
+      pendingPlaybackResumeSecRef.current = resumeTimeSec;
       setPendingPlaybackResumeSec(resumeTimeSec);
     }
     setLoadingPlayUrl(true);
@@ -853,28 +864,31 @@ export default function Home() {
 
   const handleVideoLoadedMetadata = useCallback(() => {
     updateVideoOverlayLayout();
-    if (pendingPlaybackResumeSec === null || !videoRef.current) {
+    const resumeTimeSec = pendingPlaybackResumeSecRef.current;
+    if (resumeTimeSec === null || !videoRef.current) {
       return;
     }
     const duration = Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 0;
     const target =
       duration > 0
-        ? Math.max(0, Math.min(pendingPlaybackResumeSec, Math.max(0, duration - 0.1)))
-        : Math.max(0, pendingPlaybackResumeSec);
+        ? Math.max(0, Math.min(resumeTimeSec, Math.max(0, duration - 0.1)))
+        : Math.max(0, resumeTimeSec);
     videoRef.current.currentTime = target;
+    currentVideoTimeRef.current = target;
     setCurrentVideoTime(target);
+    pendingPlaybackResumeSecRef.current = null;
     setPendingPlaybackResumeSec(null);
-  }, [pendingPlaybackResumeSec, updateVideoOverlayLayout]);
+  }, [updateVideoOverlayLayout]);
 
   const handleVideoError = useCallback(() => {
-    const resumeTime = videoRef.current?.currentTime ?? currentVideoTime;
+    const resumeTime = videoRef.current?.currentTime ?? currentVideoTimeRef.current;
     if (playUrlRecoveryAttemptRef.current >= 2) {
       setPlayUrlError('视频加载失败，请刷新播放链接后重试。');
       return;
     }
     playUrlRecoveryAttemptRef.current += 1;
     void refreshPlayUrl(resumeTime);
-  }, [currentVideoTime, refreshPlayUrl]);
+  }, [refreshPlayUrl]);
 
   useLayoutEffect(() => {
     const mount = playerMountRef.current;
@@ -892,6 +906,7 @@ export default function Home() {
     mediaElement.playbackRate = playbackRate;
     const onTimeUpdate = (event: Event) => {
       const target = event.currentTarget as HTMLVideoElement;
+      currentVideoTimeRef.current = target.currentTime;
       setCurrentVideoTime(target.currentTime);
     };
     mediaElement.addEventListener('loadedmetadata', handleVideoLoadedMetadata);
