@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import type Plyr from 'plyr';
@@ -850,7 +850,7 @@ export default function Home() {
     }
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = videoRef.current;
     if (!element || !playUrl) {
       return;
