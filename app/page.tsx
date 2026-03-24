@@ -1502,9 +1502,11 @@ export default function Home() {
     };
 
     updateOnboardingLayout();
+    const intervalId = window.setInterval(updateOnboardingLayout, 220);
     window.addEventListener('resize', updateOnboardingLayout);
     window.addEventListener('scroll', updateOnboardingLayout, true);
     return () => {
+      window.clearInterval(intervalId);
       window.removeEventListener('resize', updateOnboardingLayout);
       window.removeEventListener('scroll', updateOnboardingLayout, true);
     };
@@ -1514,23 +1516,26 @@ export default function Home() {
     isOnboardingOpen,
     isAnnotationOpen,
     isLibraryOpen,
+    isMyAnnotationsOpen,
+    isMenuOpen,
+    currentVideoMyAnnotations.length,
   ]);
 
-  const finishOnboarding = (markAsSeen: boolean) => {
+  const finishOnboarding = useCallback((markAsSeen: boolean) => {
     if (markAsSeen) {
       window.localStorage.setItem(ONBOARDING_STORAGE_KEY, ONBOARDING_VERSION);
     }
     setPendingOnboardingSeekSec(null);
     setIsOnboardingOpen(false);
-  };
+  }, []);
 
-  const openOnboarding = () => {
+  const openOnboarding = useCallback(() => {
     onboardingPreparedStepIdsRef.current = new Set();
     setOnboardingStepIndex(0);
     setOnboardingCompletedTargets({});
     setPendingOnboardingSeekSec(null);
     setIsOnboardingOpen(true);
-  };
+  }, []);
 
   const goOnboardingNext = () => {
     if (!isCurrentStepActionDone) {
@@ -1546,6 +1551,32 @@ export default function Home() {
   const goOnboardingPrev = () => {
     setOnboardingStepIndex((value) => Math.max(0, value - 1));
   };
+
+  useEffect(() => {
+    if (!isOnboardingOpen || !currentOnboardingStep.requireAction) {
+      return;
+    }
+    if (!onboardingCompletedTargets[currentOnboardingStep.targetId]) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      if (onboardingStepIndex >= ONBOARDING_STEPS.length - 1) {
+        finishOnboarding(true);
+        return;
+      }
+      setOnboardingStepIndex((value) => Math.min(value + 1, ONBOARDING_STEPS.length - 1));
+    }, 180);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    currentOnboardingStep.requireAction,
+    currentOnboardingStep.targetId,
+    finishOnboarding,
+    isOnboardingOpen,
+    onboardingCompletedTargets,
+    onboardingStepIndex,
+  ]);
 
   const annotationOverlay = isAnnotationOpen ? (
     <div
