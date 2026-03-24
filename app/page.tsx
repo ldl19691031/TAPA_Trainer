@@ -75,24 +75,21 @@ type OnboardingStep = {
 
 const ONBOARDING_STEPS: OnboardingStep[] = [
   {
-    title: 'Switch Video',
-    description:
-      'Use the top-left dropdown to switch the current training video. Related annotations will refresh automatically.',
+    title: '切换视频',
+    description: '在页面左上角通过下拉框切换当前训练视频。切换后会自动刷新对应标注数据。',
     targetId: 'video_select',
     requireAction: true,
-    actionHint: 'Click the top-left video dropdown once, then continue.',
+    actionHint: '请先点击一次左上角视频下拉框，再进入下一步。',
   },
   {
-    title: 'Add Annotation',
-    description:
-      'Use the annotation button in the player controls to open the panel. The time segment defaults to around current time +/- 1 second.',
+    title: '打开标注',
+    description: '使用播放器控制条中的标注按钮打开标注面板。默认时间段为当前时间前后各 1 秒。',
     targetId: 'annotation_button',
     requireAction: false,
   },
   {
-    title: 'Speed Control',
-    description:
-      'Use the speed button in the player controls to cycle 0.2x, 0.3x, 0.5x, 0.75x and 1x.',
+    title: '播放速度',
+    description: '使用播放器控制条中的速度按钮选择倍速（0.2x、0.3x、0.5x、0.75x、1x）。',
     targetId: 'speed_button',
     requireAction: false,
   },
