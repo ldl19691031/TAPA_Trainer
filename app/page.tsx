@@ -383,18 +383,23 @@ function captureThumbnailBase64(video: HTMLVideoElement | null): string | null {
   if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
     return null;
   }
-  const targetWidth = 160;
-  const targetHeight = Math.max(90, Math.round((targetWidth / video.videoWidth) * video.videoHeight));
-  const canvas = document.createElement('canvas');
-  canvas.width = targetWidth;
-  canvas.height = targetHeight;
-  const context = canvas.getContext('2d');
-  if (!context) {
+  try {
+    const targetWidth = 160;
+    const targetHeight = Math.max(90, Math.round((targetWidth / video.videoWidth) * video.videoHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return null;
+    }
+    context.drawImage(video, 0, 0, targetWidth, targetHeight);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.45);
+    return dataUrl || null;
+  } catch (error) {
+    console.warn('Capture thumbnail failed (likely cross-origin tainted canvas).', error);
     return null;
   }
-  context.drawImage(video, 0, 0, targetWidth, targetHeight);
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.45);
-  return dataUrl || null;
 }
 
 export default function Home() {
@@ -1645,6 +1650,7 @@ export default function Home() {
               <video
                 ref={videoRef}
                 src={playUrl}
+                crossOrigin='anonymous'
                 playsInline
                 preload='metadata'
                 onLoadedMetadata={updateVideoOverlayLayout}
