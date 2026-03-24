@@ -808,7 +808,7 @@ export default function Home() {
       setIsPlayerFullscreen(false);
       setAnnotationPortalHost(null);
     };
-  }, [handleVideoError, handleVideoLoadedMetadata, playbackRate, playUrl]);
+  }, [handleVideoError, handleVideoLoadedMetadata, playUrl]);
 
   useEffect(() => {
     updateVideoOverlayLayout();
