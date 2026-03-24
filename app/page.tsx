@@ -4,6 +4,8 @@ import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, us
 import { createPortal } from 'react-dom';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import type Plyr from 'plyr';
+import { MyAnnotationsDrawer } from '../components/annotation/MyAnnotationsDrawer';
+import { MenuDrawer } from '../components/layout/MenuDrawer';
 import { TopBar } from '../components/layout/TopBar';
 import { OnboardingOverlay } from '../components/onboarding/OnboardingOverlay';
 import { getSupabaseBrowserClient } from '../lib/supabase-browser';
@@ -1798,13 +1800,13 @@ export default function Home() {
             {loadingPlayUrl ? (
               <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center gap-3 text-sm text-zinc-300'>
                 <span className='inline-block h-4 w-4 animate-spin rounded-full border-2 border-zinc-500 border-t-white' />
-                <span>视频加载中</span>
+                <span>{'\u89c6\u9891\u52a0\u8f7d\u4e2d'}</span>
               </div>
             ) : playUrl ? (
               <div ref={playerMountRef} className='h-[calc(100vh-92px)] w-full bg-black' />
             ) : (
               <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center text-sm text-zinc-300'>
-                {playUrlError || '暂无可播放链接，请先在视频库选择或新增视频。'}
+                {playUrlError || '\u6682\u65e0\u53ef\u64ad\u653e\u94fe\u63a5\uff0c\u8bf7\u5148\u5728\u89c6\u9891\u5e93\u9009\u62e9\u6216\u65b0\u589e\u89c6\u9891\u3002'}
               </div>
             )}
           </div>
@@ -1817,7 +1819,7 @@ export default function Home() {
             }
             const labels = item.drivers
               .map((driver) => DRIVE_LABEL_MAP[driver] ?? driver)
-              .join('、');
+              .join('\u3001');
             return (
               <div
                 key={`person-overlay-${item.id}`}
@@ -1837,207 +1839,68 @@ export default function Home() {
               })
             : null}
         </article>
-
       </section>
 
-      {isMyAnnotationsOpen ? (
-        <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
-          <div className='ml-auto h-full w-full max-w-md overflow-y-auto bg-white p-5 shadow-2xl'>
-            <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>{'\u6211\u7684\u6807\u6ce8'}</h2>
-              <button
-                className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
-                onClick={() => {
-                  setOpenAnnotationActionId(null);
-                  setIsMyAnnotationsOpen(false);
-                }}
-                type='button'
-                aria-label='关闭标注侧栏'
-                title='关闭标注侧栏'
-              >
-                <IconClose />
-              </button>
-            </div>
-            <p className='mb-3 text-sm text-zinc-600'>
-              {'\u5f53\u524d\u89c6\u9891\uff1a'}{selectedVideo?.title ?? '\u672a\u9009\u62e9\u89c6\u9891'}
-            </p>
-            <div className='space-y-3'>
-              {currentVideoMyAnnotations.length === 0 ? (
-                <p className='rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500'>
-                  {'\u5f53\u524d\u89c6\u9891\u8fd8\u6ca1\u6709\u4f60\u7684\u6807\u6ce8\u3002'}                </p>
-              ) : (
-                currentVideoMyAnnotations.map((item, index) => (
-                  <article
-                    ref={index === 0 ? firstAnnotationCardRef : null}
-                    key={item.id}
-                    className='group relative cursor-pointer overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:border-blue-300 hover:shadow-md'
-                    onClick={() => {
-                      markOnboardingAction('annotation_card');
-                      seekToTime(item.start_sec);
-                    }}
-                    title={`${'\u8df3\u8f6c\u5230 '} ${formatSeconds(item.start_sec)}`}
-                  >
-                    <button
-                      ref={index === 0 ? firstAnnotationActionButtonRef : null}
-                      type='button'
-                      className='absolute right-2 top-2 z-10 inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-white/90 px-2 text-zinc-700 shadow-sm hover:bg-white'
-                      aria-label='标注操作菜单'
-                      title='标注修订'
-                      onMouseEnter={() => setHoveredAnnotationActionId(item.id)}
-                      onMouseLeave={() =>
-                        setHoveredAnnotationActionId((current) =>
-                          current === item.id ? null : current,
-                        )
-                      }
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        markOnboardingAction('annotation_action');
-                        setOpenAnnotationActionId((current) => (current === item.id ? null : item.id));
-                      }}
-                    >
-                      {hoveredAnnotationActionId === item.id ? (
-                         <span className='text-[11px] font-medium'>{'\u6807\u6ce8\u4fee\u8ba2'}</span>
-                      ) : (
-                        <IconMoreVertical />
-                      )}
-                    </button>
-                    {openAnnotationActionId === item.id ? (
-                      <div
-                        className='absolute right-2 top-11 z-20 w-28 rounded-md border border-zinc-200 bg-white p-1 shadow-lg'
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <button
-                          type='button'
-                          className='block w-full rounded px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100'
-                          onClick={() => startEditAnnotation(item)}
-                        >
-                          {'\u7f16\u8f91'}
-                        </button>
-                        <button
-                          type='button'
-                          className='block w-full rounded px-2 py-1.5 text-left text-sm text-red-600 hover:bg-red-50'
-                          onClick={() => void handleDeleteAnnotation(item.id)}
-                        >
-                          {'\u5220\u9664'}
-                        </button>
-                      </div>
-                    ) : null}
-                    {item.thumb_base64 ? (
-                      <img
-                        src={item.thumb_base64}
-                        alt='标注缩略图'
-                        className='h-28 w-full object-cover'
-                        loading='lazy'
-                      />
-                    ) : (
-                      <div className='flex h-28 w-full items-center justify-center bg-zinc-100 text-xs text-zinc-500'>
-                          {'\u65e0\u7f29\u7565\u56fe'}
-                      </div>
-                    )}
-                    <div className='border-t border-zinc-100 px-3 py-2'>
-                      <p className='line-clamp-2 text-sm font-medium text-zinc-800'>
-                        {item.drivers
-                          .map((driver) => DRIVE_LABEL_MAP[driver] ?? driver)
-                          .join('\u3001')}
-                      </p>
-                    </div>
-                  </article>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <MyAnnotationsDrawer
+        isOpen={isMyAnnotationsOpen}
+        selectedVideoTitle={selectedVideo?.title ?? '\u672a\u9009\u62e9\u89c6\u9891'}
+        annotations={currentVideoMyAnnotations}
+        firstCardRef={firstAnnotationCardRef}
+        firstActionButtonRef={firstAnnotationActionButtonRef}
+        openActionId={openAnnotationActionId}
+        hoveredActionId={hoveredAnnotationActionId}
+        driverLabelMap={DRIVE_LABEL_MAP}
+        closeIcon={<IconClose />}
+        moreIcon={<IconMoreVertical />}
+        onClose={() => {
+          setOpenAnnotationActionId(null);
+          setIsMyAnnotationsOpen(false);
+        }}
+        onCardClick={(_, startSec) => {
+          markOnboardingAction('annotation_card');
+          seekToTime(startSec);
+        }}
+        onActionHover={(annotationId) => setHoveredAnnotationActionId(annotationId)}
+        onActionToggle={(annotationId) => {
+          markOnboardingAction('annotation_action');
+          setOpenAnnotationActionId((current) => (current === annotationId ? null : annotationId));
+        }}
+        onEdit={(annotationId) => {
+          const target = currentVideoMyAnnotations.find((item) => item.id === annotationId);
+          if (target) {
+            startEditAnnotation(target);
+          }
+        }}
+        onDelete={(annotationId) => void handleDeleteAnnotation(annotationId)}
+        formatSeconds={formatSeconds}
+      />
 
-      {isMenuOpen ? (
-        <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
-          <div className='ml-auto h-full w-full max-w-sm overflow-y-auto bg-white p-5 shadow-2xl'>
-            <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>{'\u66f4\u591a\u9009\u9879'}</h2>
-              <button
-                className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
-                onClick={() => setIsMenuOpen(false)}
-                type='button'
-                aria-label={'\u5173\u95ed\u83dc\u5355'}
-                title={'\u5173\u95ed\u83dc\u5355'}
-              >
-                <IconClose />
-              </button>
-            </div>
-
-            <section className='mb-4 rounded-lg border border-zinc-200 p-3'>
-              <p className='mb-2 text-xs font-medium text-zinc-600'>{'\u6a21\u5f0f'}</p>
-              <div className='inline-flex rounded-md border border-zinc-300 p-1'>
-                <button
-                  type='button'
-                  onClick={() => setMode('practice')}
-                  className={'rounded px-2 py-1 text-xs ' + (mode === 'practice' ? 'bg-zinc-900 text-white' : 'text-zinc-700')}
-                >
-                  {'\u7ec3\u4e60'}
-                </button>
-                <button
-                  type='button'
-                  onClick={() => setMode('supervision')}
-                  className={'rounded px-2 py-1 text-xs ' + (mode === 'supervision' ? 'bg-zinc-900 text-white' : 'text-zinc-700')}
-                >
-                  {'\u7763\u5bfc'}
-                </button>
-              </div>
-              <label className='mt-3 flex items-center gap-2 text-sm text-zinc-700'>
-                <input
-                  type='checkbox'
-                  checked={quickMode}
-                  onChange={(event) => setQuickMode(event.target.checked)}
-                />
-                {'\u5feb\u901f\u6a21\u5f0f'}              </label>
-            </section>
-
-            <div className='grid gap-2'>
-              <button
-                className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
-                type='button'
-                onClick={() => {
-                  setIsMenuOpen(false);
-                  void refreshPlayUrl();
-                }}
-              >
-                <IconRefresh />
-                {'\u5237\u65b0\u64ad\u653e\u94fe\u63a5'}
-              </button>
-              <button
-                className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
-                type='button'
-                onClick={() => {
-                  setIsMenuOpen(false);
-                  setIsLibraryOpen(true);
-                }}
-              >
-                <IconFolder />
-                {'\u89c6\u9891\u5e93\u4e0e\u63d0\u4ea4'}
-              </button>
-              <button
-                className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
-                type='button'
-                onClick={() => {
-                  setIsMenuOpen(false);
-                  openOnboarding();
-                }}
-              >
-                <IconHelp />
-                {'\u5e2e\u52a9'}
-              </button>
-              <button
-                className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
-                type='button'
-                onClick={handleSignOut}
-              >
-                <IconSignOut />
-                {'\u767b\u51fa'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <MenuDrawer
+        isOpen={isMenuOpen}
+        mode={mode}
+        quickMode={quickMode}
+        closeIcon={<IconClose />}
+        refreshIcon={<IconRefresh />}
+        folderIcon={<IconFolder />}
+        helpIcon={<IconHelp />}
+        signOutIcon={<IconSignOut />}
+        onClose={() => setIsMenuOpen(false)}
+        onModeChange={setMode}
+        onQuickModeChange={setQuickMode}
+        onRefreshPlayUrl={() => {
+          setIsMenuOpen(false);
+          void refreshPlayUrl();
+        }}
+        onOpenLibrary={() => {
+          setIsMenuOpen(false);
+          setIsLibraryOpen(true);
+        }}
+        onOpenHelp={() => {
+          setIsMenuOpen(false);
+          openOnboarding();
+        }}
+        onSignOut={handleSignOut}
+      />
 
       {isLibraryOpen ? (
         <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
