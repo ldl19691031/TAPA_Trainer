@@ -6,10 +6,12 @@ import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import type Plyr from 'plyr';
 import { AnnotationOverlay } from '../components/annotation/AnnotationOverlay';
 import { MyAnnotationsDrawer } from '../components/annotation/MyAnnotationsDrawer';
+import { AuthScreen } from '../components/auth/AuthScreen';
 import { MenuDrawer } from '../components/layout/MenuDrawer';
 import { TopBar } from '../components/layout/TopBar';
 import { VideoLibraryDrawer } from '../components/library/VideoLibraryDrawer';
 import { OnboardingOverlay } from '../components/onboarding/OnboardingOverlay';
+import { PlayerSurface } from '../components/player/PlayerSurface';
 import { getSupabaseBrowserClient } from '../lib/supabase-browser';
 import {
   buildMergeClusters,
@@ -1562,46 +1564,21 @@ export default function Home() {
     />
   );
 
-  if (authLoading) {
-    return <main className='mx-auto flex min-h-screen items-center justify-center'>加载中...</main>;
-  }
-
   if (!session) {
     return (
-      <main className='mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-4 py-10'>
-        <section className='w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-sm'>
-          <h1 className='text-xl font-semibold text-zinc-900'>{'驱力训练'}</h1>
-          <p className='mt-2 text-sm text-zinc-600'>{'使用 Magic Link 登录，登录后会保持会话。'}</p>
-          {!envReady ? (
-            <p className='mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
-              {'缺少 NEXT_PUBLIC_SUPABASE_URL 或 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。'}            </p>
-          ) : null}
-          <form className='mt-4 space-y-3' onSubmit={handleSendMagicLink}>
-            <input
-              className='w-full rounded-md border border-zinc-300 px-3 py-2 text-sm'
-              placeholder='your@email.com'
-              type='email'
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-            <button
-              className='w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60'
-              type='submit'
-              disabled={authSending || magicCooldown > 0}
-            >
-              {authSending
-                ? '发送中...'
-                : magicCooldown > 0
-                  ? magicCooldown + 's ' + '后重试'
-                  : '发送 Magic Link'}
-            </button>
-          </form>
-          {authMessage ? <p className='mt-3 text-sm text-zinc-700'>{authMessage}</p> : null}
-        </section>
-      </main>
+      <AuthScreen
+        loading={authLoading}
+        envReady={envReady}
+        email={email}
+        authSending={authSending}
+        magicCooldown={magicCooldown}
+        authMessage={authMessage}
+        onEmailChange={setEmail}
+        onSubmit={handleSendMagicLink}
+      />
     );
   }
+
 
   return (
     <main className='min-h-screen bg-zinc-100'>
@@ -1628,55 +1605,39 @@ export default function Home() {
         menuButtonIcon={<IconMenu />}
       />
 
-      <section className='mx-auto w-full max-w-[1800px] px-4 py-3'>
-        <article
-            ref={articleRef}
-            className='tapa-player-shell relative overflow-hidden rounded-2xl border border-zinc-200 bg-black shadow-sm'
-          >
-          <div>
-            {loadingPlayUrl ? (
-              <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center gap-3 text-sm text-zinc-300'>
-                <span className='inline-block h-4 w-4 animate-spin rounded-full border-2 border-zinc-500 border-t-white' />
-                <span>{'\u89c6\u9891\u52a0\u8f7d\u4e2d'}</span>
-              </div>
-            ) : playUrl ? (
-              <div ref={playerMountRef} className='h-[calc(100vh-92px)] w-full bg-black' />
-            ) : (
-              <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center text-sm text-zinc-300'>
-                {playUrlError || '\u6682\u65e0\u53ef\u64ad\u653e\u94fe\u63a5\uff0c\u8bf7\u5148\u5728\u89c6\u9891\u5e93\u9009\u62e9\u6216\u65b0\u589e\u89c6\u9891\u3002'}
-              </div>
-            )}
-          </div>
-
-          {!isAnnotationOpen
-            ? activePersonAnnotations.map((item) => {
-            const box = item.person_box;
-            if (!box || !videoOverlayLayout) {
-              return null;
-            }
-            const labels = item.drivers
-              .map((driver) => DRIVE_LABEL_MAP[driver] ?? driver)
-              .join('\u3001');
-            return (
-              <div
-                key={`person-overlay-${item.id}`}
-                className='pointer-events-none absolute z-10 rounded border-2 border-blue-400'
-                style={{
-                  left: videoOverlayLayout.articleLeft + box.left * videoOverlayLayout.width,
-                  top: videoOverlayLayout.articleTop + box.top * videoOverlayLayout.height,
-                  width: box.width * videoOverlayLayout.width,
-                  height: box.height * videoOverlayLayout.height,
-                }}
-              >
-                <span className='absolute -top-7 left-0 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white shadow-sm'>
-                  {labels}
-                </span>
-              </div>
-            );
-              })
-            : null}
-        </article>
-      </section>
+      <PlayerSurface
+        articleRef={articleRef}
+        playerMountRef={playerMountRef}
+        loadingPlayUrl={loadingPlayUrl}
+        playUrl={playUrl}
+        playUrlError={playUrlError}
+        isAnnotationOpen={isAnnotationOpen}
+        activePersonAnnotations={activePersonAnnotations.map((item) => {
+          const box = item.person_box;
+          if (!box || !videoOverlayLayout) {
+            return null;
+          }
+          const labels = item.drivers
+            .map((driver) => DRIVE_LABEL_MAP[driver] ?? driver)
+            .join('\u3001');
+          return (
+            <div
+              key={`person-overlay-${item.id}`}
+              className='pointer-events-none absolute z-10 rounded border-2 border-blue-400'
+              style={{
+                left: videoOverlayLayout.articleLeft + box.left * videoOverlayLayout.width,
+                top: videoOverlayLayout.articleTop + box.top * videoOverlayLayout.height,
+                width: box.width * videoOverlayLayout.width,
+                height: box.height * videoOverlayLayout.height,
+              }}
+            >
+              <span className='absolute -top-7 left-0 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white shadow-sm'>
+                {labels}
+              </span>
+            </div>
+          );
+        })}
+      />
 
       <MyAnnotationsDrawer
         isOpen={isMyAnnotationsOpen}
