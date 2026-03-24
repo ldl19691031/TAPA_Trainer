@@ -226,6 +226,16 @@ function IconUserTag() {
   );
 }
 
+function IconMoreVertical() {
+  return (
+    <svg viewBox='0 0 24 24' aria-hidden='true' className='h-4 w-4'>
+      <circle cx='12' cy='5' r='1.75' fill='currentColor' />
+      <circle cx='12' cy='12' r='1.75' fill='currentColor' />
+      <circle cx='12' cy='19' r='1.75' fill='currentColor' />
+    </svg>
+  );
+}
+
 const CUE_ROWS: Array<{ key: keyof DriveCue; icon: string }> = [
   { key: 'lexicon', icon: '\u{1F4AC}' }, // speech balloon
   { key: 'tone', icon: '\u{1F3B5}' }, // musical note
@@ -427,6 +437,8 @@ export default function Home() {
 
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [isMyAnnotationsOpen, setIsMyAnnotationsOpen] = useState(false);
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const [openAnnotationActionId, setOpenAnnotationActionId] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
   const [isPersonPicking, setIsPersonPicking] = useState(false);
@@ -1006,13 +1018,61 @@ export default function Home() {
     setAnnotations(result.rows);
   };
 
+
+  const seekToTime = (seconds: number) => {
+    if (!videoRef.current) {
+      return;
+    }
+    videoRef.current.currentTime = Math.max(0, Number(seconds) || 0);
+    setCurrentVideoTime(videoRef.current.currentTime);
+  };
+
+  const startEditAnnotation = (item: AnnotationRow) => {
+    setEditingAnnotationId(item.id);
+    setSelectedDrivers(item.drivers);
+    setQuickMode(!item.comment);
+    setComment(item.comment ?? '');
+    setSegmentStart(item.start_sec);
+    setSegmentEnd(item.end_sec);
+    setSelectedPersonTrackId(item.person_track_id);
+    setSelectedPersonTsSec(item.person_ts_sec);
+    setSelectedPersonBox(item.person_box);
+    setOpenAnnotationActionId(null);
+    setIsMyAnnotationsOpen(false);
+    setIsAnnotationOpen(true);
+    seekToTime(item.start_sec);
+  };
+
+  const handleDeleteAnnotation = async (id: string) => {
+    if (!supabase || !session) {
+      return;
+    }
+    if (!window.confirm('\u786e\u8ba4\u5220\u9664\u8fd9\u6761\u6807\u6ce8\uff1f')) {
+      return;
+    }
+    const { error } = await supabase
+      .from('annotations')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', session.user.id);
+    if (error) {
+      setQueryError('\u5220\u9664\u6807\u6ce8\u5931\u8d25\uff1a' + error.message);
+      return;
+    }
+    if (editingAnnotationId === id) {
+      setEditingAnnotationId(null);
+    }
+    setOpenAnnotationActionId(null);
+    await refreshAnnotations();
+  };
+
   const handleSubmitAnnotation = async (event: FormEvent) => {
     event.preventDefault();
     if (!supabase || !session || !selectedVideo) {
       return;
     }
     if (selectedDrivers.length === 0) {
-      setQueryError('至少选择一个驱力。');
+      setQueryError('\u81f3\u5c11\u9009\u62e9\u4e00\u4e2a\u9a71\u529b\u3002');
       return;
     }
     const normalized = normalizeSegment(
@@ -1034,30 +1094,67 @@ export default function Home() {
       person_box: selectedPersonBox,
       thumb_base64: thumbBase64,
     };
-    let { error } = await supabase.from('annotations').insert(payload);
-    if (
-      error?.message.includes('person_track_id') ||
-      error?.message.includes('person_box') ||
-      error?.message.includes('person_ts_sec') ||
-      error?.message.includes('thumb_base64')
-    ) {
-      const fallbackResult = await supabase.from('annotations').insert({
-        ...payload,
-        person_track_id: null,
-        person_ts_sec: null,
-        person_box: null,
-        thumb_base64: null,
-      });
-      error = fallbackResult.error;
-      if (!error) {
-        setQueryError('已保存标注。当前数据库缺少 person_* 字段，请执行新 SQL migration。');
+
+    let error: { message: string } | null = null;
+
+    if (editingAnnotationId) {
+      const updateResult = await supabase
+        .from('annotations')
+        .update(payload)
+        .eq('id', editingAnnotationId)
+        .eq('user_id', session.user.id);
+      error = updateResult.error;
+      if (
+        error?.message.includes('person_track_id') ||
+        error?.message.includes('person_box') ||
+        error?.message.includes('person_ts_sec') ||
+        error?.message.includes('thumb_base64')
+      ) {
+        const fallbackResult = await supabase
+          .from('annotations')
+          .update({
+            ...payload,
+            person_track_id: null,
+            person_ts_sec: null,
+            person_box: null,
+            thumb_base64: null,
+          })
+          .eq('id', editingAnnotationId)
+          .eq('user_id', session.user.id);
+        error = fallbackResult.error;
+        if (!error) {
+          setQueryError('\u5df2\u4fdd\u5b58\u6807\u6ce8\u3002\u5f53\u524d\u6570\u636e\u5e93\u7f3a\u5c11 person_* \u5b57\u6bb5\uff0c\u8bf7\u6267\u884c\u65b0 SQL migration\u3002');
+        }
+      }
+    } else {
+      const insertResult = await supabase.from('annotations').insert(payload);
+      error = insertResult.error;
+      if (
+        error?.message.includes('person_track_id') ||
+        error?.message.includes('person_box') ||
+        error?.message.includes('person_ts_sec') ||
+        error?.message.includes('thumb_base64')
+      ) {
+        const fallbackResult = await supabase.from('annotations').insert({
+          ...payload,
+          person_track_id: null,
+          person_ts_sec: null,
+          person_box: null,
+          thumb_base64: null,
+        });
+        error = fallbackResult.error;
+        if (!error) {
+          setQueryError('\u5df2\u4fdd\u5b58\u6807\u6ce8\u3002\u5f53\u524d\u6570\u636e\u5e93\u7f3a\u5c11 person_* \u5b57\u6bb5\uff0c\u8bf7\u6267\u884c\u65b0 SQL migration\u3002');
+        }
       }
     }
+
     setSaving(false);
     if (error) {
-      setQueryError('保存标注失败：' + error.message);
+      setQueryError('\u4fdd\u5b58\u6807\u6ce8\u5931\u8d25\uff1a' + error.message);
       return;
     }
+
     setSegmentStart(normalized.start);
     setSegmentEnd(normalized.end + MIN_SEGMENT_SECONDS);
     setSelectedDrivers([]);
@@ -1065,6 +1162,8 @@ export default function Home() {
     setSelectedPersonTrackId(null);
     setSelectedPersonBox(null);
     setSelectedPersonTsSec(null);
+    setEditingAnnotationId(null);
+    setOpenAnnotationActionId(null);
     setQueryError('');
     await refreshAnnotations();
   };
@@ -1084,6 +1183,16 @@ export default function Home() {
     }
     return annotations.filter((item) => item.user_id === session.user.id);
   }, [annotations, session]);
+
+
+  const currentVideoMyAnnotations = useMemo(() => {
+    if (!selectedVideoId) {
+      return [];
+    }
+    return myAnnotations
+      .filter((item) => item.video_id === selectedVideoId)
+      .sort((a, b) => b.start_sec - a.start_sec);
+  }, [myAnnotations, selectedVideoId]);
 
   const activePersonAnnotations = useMemo(
     () =>
@@ -1403,9 +1512,27 @@ export default function Home() {
                 type='submit'
                 disabled={saving || selectedDrivers.length === 0 || !selectedVideoId}
               >
-                {saving ? '保存中...' : '保存标注'}
+                {saving
+                  ? '\u4fdd\u5b58\u4e2d...'
+                  : editingAnnotationId
+                    ? '\u4fdd\u5b58\u4fee\u6539'
+                    : '\u4fdd\u5b58\u6807\u6ce8'}
               </button>
             </div>
+            {editingAnnotationId ? (
+              <button
+                type='button'
+                className='text-xs text-zinc-500 underline underline-offset-2 hover:text-zinc-700'
+                onClick={() => {
+                  setEditingAnnotationId(null);
+                  setSelectedDrivers([]);
+                  setComment('');
+                  setOpenAnnotationActionId(null);
+                }}
+              >
+                {'\u53d6\u6d88\u7f16\u8f91'}
+              </button>
+            ) : null}
           </form>
 
           {queryError ? (
@@ -1566,41 +1693,85 @@ export default function Home() {
         <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
           <div className='ml-auto h-full w-full max-w-md overflow-y-auto bg-white p-5 shadow-2xl'>
             <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>我的标注</h2>
+              <h2 className='text-base font-semibold text-zinc-900'>\u6211\u7684\u6807\u6ce8</h2>
               <button
                 className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
-                onClick={() => setIsMyAnnotationsOpen(false)}
+                onClick={() => {
+                  setOpenAnnotationActionId(null);
+                  setIsMyAnnotationsOpen(false);
+                }}
                 type='button'
-                aria-label='关闭标注侧栏'
-                title='关闭标注侧栏'
+                aria-label='\u5173\u95ed\u6807\u6ce8\u4fa7\u680f'
+                title='\u5173\u95ed\u6807\u6ce8\u4fa7\u680f'
               >
                 <IconClose />
               </button>
             </div>
-            <p className='mb-3 text-sm text-zinc-600'>当前视频：{selectedVideo?.title ?? '未选择视频'}</p>
-            <div className='space-y-2'>
-              {myAnnotations.length === 0 ? (
+            <p className='mb-3 text-sm text-zinc-600'>\u5f53\u524d\u89c6\u9891\uff1a{selectedVideo?.title ?? '\u672a\u9009\u62e9\u89c6\u9891'}</p>
+            <div className='space-y-3'>
+              {currentVideoMyAnnotations.length === 0 ? (
                 <p className='rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500'>
-                  暂无你的标注
+                  \u5f53\u524d\u89c6\u9891\u8fd8\u6ca1\u6709\u4f60\u7684\u6807\u6ce8
                 </p>
               ) : (
-                myAnnotations.map((item) => (
-                  <article key={item.id} className='rounded-md border border-zinc-200 p-3'>
-                    <p className='text-sm font-medium text-zinc-900'>
-                      {formatSeconds(item.start_sec)} - {formatSeconds(item.end_sec)}
-                    </p>
-                    <p className='mt-1 text-sm text-zinc-700'>
-                      {item.drivers.map((driver) => DRIVE_LABEL_MAP[driver] ?? driver).join('、')}
-                    </p>
+                currentVideoMyAnnotations.map((item) => (
+                  <article
+                    key={item.id}
+                    className='group relative cursor-pointer overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:border-blue-300 hover:shadow-md'
+                    onClick={() => seekToTime(item.start_sec)}
+                    title={`\u8df3\u8f6c\u5230 ${formatSeconds(item.start_sec)}`}
+                  >
+                    <button
+                      type='button'
+                      className='absolute right-2 top-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-zinc-700 shadow-sm hover:bg-white'
+                      aria-label='\u6807\u6ce8\u64cd\u4f5c\u83dc\u5355'
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setOpenAnnotationActionId((current) => (current === item.id ? null : item.id));
+                      }}
+                    >
+                      <IconMoreVertical />
+                    </button>
+                    {openAnnotationActionId === item.id ? (
+                      <div
+                        className='absolute right-2 top-11 z-20 w-28 rounded-md border border-zinc-200 bg-white p-1 shadow-lg'
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <button
+                          type='button'
+                          className='block w-full rounded px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100'
+                          onClick={() => startEditAnnotation(item)}
+                        >
+                          {'\u7f16\u8f91'}
+                        </button>
+                        <button
+                          type='button'
+                          className='block w-full rounded px-2 py-1.5 text-left text-sm text-red-600 hover:bg-red-50'
+                          onClick={() => void handleDeleteAnnotation(item.id)}
+                        >
+                          {'\u5220\u9664'}
+                        </button>
+                      </div>
+                    ) : null}
                     {item.thumb_base64 ? (
                       <img
                         src={item.thumb_base64}
-                        alt='annotation thumbnail'
-                        className='mt-2 h-16 w-auto rounded border border-zinc-200 bg-zinc-100'
+                        alt='\u6807\u6ce8\u7f29\u7565\u56fe'
+                        className='h-28 w-full object-cover'
+                        loading='lazy'
                       />
-                    ) : null}
-                    {item.comment ? <p className='mt-1 text-sm text-zinc-500'>{item.comment}</p> : null}
-                    <p className='mt-1 text-xs text-zinc-400'>{new Date(item.created_at).toLocaleString()}</p>
+                    ) : (
+                      <div className='flex h-28 w-full items-center justify-center bg-zinc-100 text-xs text-zinc-500'>
+                        {'\u65e0\u7f29\u7565\u56fe'}
+                      </div>
+                    )}
+                    <div className='border-t border-zinc-100 px-3 py-2'>
+                      <p className='line-clamp-2 text-sm font-medium text-zinc-800'>
+                        {item.drivers
+                          .map((driver) => DRIVE_LABEL_MAP[driver] ?? driver)
+                          .join('\u3001')}
+                      </p>
+                    </div>
                   </article>
                 ))
               )}
