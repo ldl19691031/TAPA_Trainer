@@ -555,6 +555,7 @@ export default function Home() {
     targetId: 'video_select',
   });
   const articleRef = useRef<HTMLElement | null>(null);
+  const playerMountRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<Plyr | null>(null);
   const playUrlRecoveryAttemptRef = useRef(0);
@@ -747,7 +748,7 @@ export default function Home() {
       return;
     }
     setMagicCooldown(30);
-    setAuthMessage('魔法链接已发送，请查收邮箱。');
+    setAuthMessage('Magic link 已发送，请查收邮箱。');
     setAuthSending(false);
   };
 
@@ -850,26 +851,67 @@ export default function Home() {
     }
   }, []);
 
+  const handleVideoLoadedMetadata = useCallback(() => {
+    updateVideoOverlayLayout();
+    if (pendingPlaybackResumeSec === null || !videoRef.current) {
+      return;
+    }
+    const duration = Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 0;
+    const target =
+      duration > 0
+        ? Math.max(0, Math.min(pendingPlaybackResumeSec, Math.max(0, duration - 0.1)))
+        : Math.max(0, pendingPlaybackResumeSec);
+    videoRef.current.currentTime = target;
+    setCurrentVideoTime(target);
+    setPendingPlaybackResumeSec(null);
+  }, [pendingPlaybackResumeSec, updateVideoOverlayLayout]);
+
+  const handleVideoError = useCallback(() => {
+    const resumeTime = videoRef.current?.currentTime ?? currentVideoTime;
+    if (playUrlRecoveryAttemptRef.current >= 2) {
+      setPlayUrlError('视频加载失败，请刷新播放链接后重试。');
+      return;
+    }
+    playUrlRecoveryAttemptRef.current += 1;
+    void refreshPlayUrl(resumeTime);
+  }, [currentVideoTime, refreshPlayUrl]);
+
   useLayoutEffect(() => {
-    const element = videoRef.current;
-    if (!element || !playUrl) {
+    const mount = playerMountRef.current;
+    if (!mount || !playUrl) {
       return;
     }
     let canceled = false;
     let localPlayer: Plyr | null = null;
+    const mediaElement = document.createElement('video');
+    mediaElement.src = playUrl;
+    mediaElement.crossOrigin = 'anonymous';
+    mediaElement.playsInline = true;
+    mediaElement.preload = 'metadata';
+    mediaElement.className = 'h-[calc(100vh-92px)] w-full bg-black';
+    mediaElement.playbackRate = playbackRate;
+    const onTimeUpdate = (event: Event) => {
+      const target = event.currentTarget as HTMLVideoElement;
+      setCurrentVideoTime(target.currentTime);
+    };
+    mediaElement.addEventListener('loadedmetadata', handleVideoLoadedMetadata);
+    mediaElement.addEventListener('timeupdate', onTimeUpdate);
+    mediaElement.addEventListener('error', handleVideoError);
+    mount.replaceChildren(mediaElement);
+    videoRef.current = mediaElement;
 
     void import('plyr').then(({ default: PlyrCtor }) => {
       if (canceled || !videoRef.current) {
         return;
       }
-      localPlayer = new PlyrCtor(videoRef.current, {
+      localPlayer = new PlyrCtor(mediaElement, {
         controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'fullscreen'],
         settings: [],
         keyboard: { focused: true, global: false },
         clickToPlay: true,
         fullscreen: { enabled: true, fallback: true, iosNative: false },
       });
-      localPlayer.speed = videoRef.current.playbackRate;
+      localPlayer.speed = mediaElement.playbackRate;
       localPlayer.on('enterfullscreen', () => {
         setIsPlayerFullscreen(true);
         setAnnotationPortalHost((localPlayer?.elements?.container as HTMLElement | undefined) ?? null);
@@ -893,10 +935,19 @@ export default function Home() {
       if (playerRef.current === localPlayer) {
         playerRef.current = null;
       }
+      mediaElement.removeEventListener('loadedmetadata', handleVideoLoadedMetadata);
+      mediaElement.removeEventListener('timeupdate', onTimeUpdate);
+      mediaElement.removeEventListener('error', handleVideoError);
+      if (videoRef.current === mediaElement) {
+        videoRef.current = null;
+      }
+      if (mount.contains(mediaElement)) {
+        mount.removeChild(mediaElement);
+      }
       setIsPlayerFullscreen(false);
       setAnnotationPortalHost(null);
     };
-  }, [playUrl]);
+  }, [handleVideoError, handleVideoLoadedMetadata, playbackRate, playUrl]);
 
   useEffect(() => {
     updateVideoOverlayLayout();
@@ -1116,7 +1167,7 @@ export default function Home() {
     const title = videoTitle.trim();
     const storageKey = videoStorageKey.trim();
     if (!title || !storageKey) {
-      setQueryError('标题和存储 key 必填。');
+      setQueryError('标题和存储 key 为必填项。');
       return;
     }
     const { data, error } = await supabase
@@ -1169,31 +1220,6 @@ export default function Home() {
     videoRef.current.currentTime = Math.max(0, Number(seconds) || 0);
     setCurrentVideoTime(videoRef.current.currentTime);
   };
-
-  const handleVideoLoadedMetadata = useCallback(() => {
-    updateVideoOverlayLayout();
-    if (pendingPlaybackResumeSec === null || !videoRef.current) {
-      return;
-    }
-    const duration = Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 0;
-    const target =
-      duration > 0
-        ? Math.max(0, Math.min(pendingPlaybackResumeSec, Math.max(0, duration - 0.1)))
-        : Math.max(0, pendingPlaybackResumeSec);
-    videoRef.current.currentTime = target;
-    setCurrentVideoTime(target);
-    setPendingPlaybackResumeSec(null);
-  }, [pendingPlaybackResumeSec, updateVideoOverlayLayout]);
-
-  const handleVideoError = useCallback(() => {
-    const resumeTime = videoRef.current?.currentTime ?? currentVideoTime;
-    if (playUrlRecoveryAttemptRef.current >= 2) {
-      setPlayUrlError('视频加载失败，请刷新播放链接后重试。');
-      return;
-    }
-    playUrlRecoveryAttemptRef.current += 1;
-    void refreshPlayUrl(resumeTime);
-  }, [currentVideoTime, refreshPlayUrl]);
 
   const startEditAnnotation = (item: AnnotationRow) => {
     setEditingAnnotationId(item.id);
@@ -1644,7 +1670,7 @@ export default function Home() {
             <button
               type='button'
               className='pointer-events-auto fixed inset-0'
-              aria-label='退出选人模式'
+              aria-label='閫€鍑洪€変汉妯″紡'
               onClick={() => setIsPersonPicking(false)}
             />
           ) : null}
@@ -1676,15 +1702,15 @@ export default function Home() {
                   selectPersonCandidate(candidate);
                   setIsPersonPicking(false);
                 }}
-                aria-label={'在视频中选择轨迹 ' + candidate.trackId}
-                title={'轨迹 ' + candidate.trackId}
+                aria-label={'鍦ㄨ棰戜腑閫夋嫨杞ㄨ抗 ' + candidate.trackId}
+                title={'杞ㄨ抗 ' + candidate.trackId}
               >
                 <span
                   className={`absolute left-1 top-1 rounded px-1 text-[10px] font-semibold ${
                     selected ? 'bg-blue-600 text-white' : 'bg-black/70 text-white'
                   }`}
                 >
-                  {selected ? '已选 #' + candidate.trackId : '#' + candidate.trackId}
+                  {selected ? '宸查€?#' + candidate.trackId : '#' + candidate.trackId}
                 </span>
               </button>
             );
@@ -1714,13 +1740,13 @@ export default function Home() {
           aria-modal='true'
         >
           <div className='mb-3 flex items-center justify-between'>
-            <h2 className='text-base font-semibold text-zinc-900'>标注</h2>
+            <h2 className='text-base font-semibold text-zinc-900'>鏍囨敞</h2>
             <button
               className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
               onClick={() => setIsAnnotationOpen(false)}
               type='button'
-              aria-label='关闭'
-              title='关闭'
+              aria-label='鍏抽棴'
+              title='鍏抽棴'
             >
               <IconClose />
             </button>
@@ -1776,7 +1802,7 @@ export default function Home() {
 
             {!quickMode ? (
               <label className='text-sm text-zinc-700'>
-                评论
+                璇勮
                 <textarea
                   className='mt-1 h-24 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
                   maxLength={MAX_COMMENT_LENGTH}
@@ -1793,8 +1819,8 @@ export default function Home() {
                 className={`inline-flex h-10 w-10 items-center justify-center rounded-md border text-zinc-700 ${
                   isPersonPicking ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-zinc-300 hover:bg-zinc-50'
                 }`}
-                title='选择标注对象'
-                aria-label='选择标注对象'
+                title='閫夋嫨鏍囨敞瀵硅薄'
+                aria-label='閫夋嫨鏍囨敞瀵硅薄'
                 onClick={() => void startPersonPicking()}
               >
                 <IconUserTag />
@@ -1839,15 +1865,15 @@ export default function Home() {
   ) : null;
 
   if (authLoading) {
-    return <main className='mx-auto flex min-h-screen items-center justify-center'>加载中...</main>;
+    return <main className='mx-auto flex min-h-screen items-center justify-center'>鍔犺浇涓?..</main>;
   }
 
   if (!session) {
     return (
       <main className='mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-4 py-10'>
         <section className='w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-sm'>
-          <h1 className='text-xl font-semibold text-zinc-900'>驱力行为训练</h1>
-          <p className='mt-2 text-sm text-zinc-600'>使用魔法链接登录，登录后会保持会话。</p>
+          <h1 className='text-xl font-semibold text-zinc-900'>驱力训练</h1>
+          <p className='mt-2 text-sm text-zinc-600'>使用 Magic Link 登录，登录后会保持会话。</p>
           {!envReady ? (
             <p className='mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
               缺少 NEXT_PUBLIC_SUPABASE_URL 或 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。
@@ -1867,7 +1893,11 @@ export default function Home() {
               type='submit'
               disabled={authSending || magicCooldown > 0}
             >
-              {authSending ? '发送中...' : magicCooldown > 0 ? magicCooldown + 's 后重试' : '发送魔法链接'}
+              {authSending
+                ? '发送中...'
+                : magicCooldown > 0
+                  ? magicCooldown + 's 后重试'
+                  : '发送 Magic Link'}
             </button>
           </form>
           {authMessage ? <p className='mt-3 text-sm text-zinc-700'>{authMessage}</p> : null}
@@ -1881,7 +1911,7 @@ export default function Home() {
       <header className='sticky top-0 z-30 border-b border-zinc-200 bg-white/95 backdrop-blur'>
         <div className='mx-auto flex h-14 w-full max-w-[1800px] items-center justify-between px-4'>
           <div className='flex min-w-0 items-center gap-3'>
-            <h1 className='whitespace-nowrap text-sm font-semibold tracking-wide text-zinc-900'>驱力训练</h1>
+            <h1 className='whitespace-nowrap text-sm font-semibold tracking-wide text-zinc-900'>椹卞姏璁粌</h1>
             <select
               ref={videoSelectRef}
               className='w-[240px] max-w-[52vw] truncate rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-700'
@@ -1891,9 +1921,9 @@ export default function Home() {
                 markOnboardingAction('video_select');
                 setSelectedVideoId(event.target.value);
               }}
-              title='切换视频'
+              title='鍒囨崲瑙嗛'
             >
-              {videos.length === 0 ? <option value=''>暂无视频</option> : null}
+              {videos.length === 0 ? <option value=''>鏆傛棤瑙嗛</option> : null}
               {videos.map((video) => (
                 <option key={video.id} value={video.id}>
                   {video.title}
@@ -1923,8 +1953,8 @@ export default function Home() {
                 markOnboardingAction('menu_button');
                 setIsMenuOpen(true);
               }}
-              title='打开菜单'
-              aria-label='打开菜单'
+              title='鎵撳紑鑿滃崟'
+              aria-label='鎵撳紑鑿滃崟'
             >
               <IconMenu />
             </button>
@@ -1943,17 +1973,7 @@ export default function Home() {
                 正在生成播放链接...
               </div>
             ) : playUrl ? (
-              <video
-                ref={videoRef}
-                src={playUrl}
-                crossOrigin='anonymous'
-                playsInline
-                preload='metadata'
-                onLoadedMetadata={handleVideoLoadedMetadata}
-                onError={handleVideoError}
-                onTimeUpdate={(event) => setCurrentVideoTime(event.currentTarget.currentTime)}
-                className='h-[calc(100vh-92px)] w-full bg-black'
-              />
+              <div ref={playerMountRef} className='h-[calc(100vh-92px)] w-full bg-black' />
             ) : (
               <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center text-sm text-zinc-300'>
                 {playUrlError || '暂无可播放链接，请先在视频库选择或新增视频。'}
@@ -2016,7 +2036,7 @@ export default function Home() {
             <div className='space-y-3'>
               {currentVideoMyAnnotations.length === 0 ? (
                 <p className='rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500'>
-                  当前视频还没有你的标注
+                  当前视频还没有你的标注。
                 </p>
               ) : (
                 currentVideoMyAnnotations.map((item, index) => (
@@ -2104,34 +2124,34 @@ export default function Home() {
         <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
           <div className='ml-auto h-full w-full max-w-sm overflow-y-auto bg-white p-5 shadow-2xl'>
             <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>菜单</h2>
+              <h2 className='text-base font-semibold text-zinc-900'>鑿滃崟</h2>
               <button
                 className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
                 onClick={() => setIsMenuOpen(false)}
                 type='button'
-                aria-label='关闭菜单'
-                title='关闭菜单'
+                aria-label='鍏抽棴鑿滃崟'
+                title='鍏抽棴鑿滃崟'
               >
                 <IconClose />
               </button>
             </div>
 
             <section className='mb-4 rounded-lg border border-zinc-200 p-3'>
-              <p className='mb-2 text-xs font-medium text-zinc-600'>模式</p>
+              <p className='mb-2 text-xs font-medium text-zinc-600'>妯″紡</p>
               <div className='inline-flex rounded-md border border-zinc-300 p-1'>
                 <button
                   type='button'
                   onClick={() => setMode('practice')}
                   className={'rounded px-2 py-1 text-xs ' + (mode === 'practice' ? 'bg-zinc-900 text-white' : 'text-zinc-700')}
                 >
-                  练习
+                  缁冧範
                 </button>
                 <button
                   type='button'
                   onClick={() => setMode('supervision')}
                   className={'rounded px-2 py-1 text-xs ' + (mode === 'supervision' ? 'bg-zinc-900 text-white' : 'text-zinc-700')}
                 >
-                  督导
+                  鐫ｅ
                 </button>
               </div>
               <label className='mt-3 flex items-center gap-2 text-sm text-zinc-700'>
@@ -2140,7 +2160,7 @@ export default function Home() {
                   checked={quickMode}
                   onChange={(event) => setQuickMode(event.target.checked)}
                 />
-                快速模式
+                蹇€熸ā寮?
               </label>
             </section>
 
@@ -2154,7 +2174,7 @@ export default function Home() {
                 }}
               >
                 <IconRefresh />
-                刷新播放链接
+                鍒锋柊鎾斁閾炬帴
               </button>
               <button
                 className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
@@ -2165,7 +2185,7 @@ export default function Home() {
                 }}
               >
                 <IconFolder />
-                视频库与提交
+                瑙嗛搴撲笌鎻愪氦
               </button>
               <button
                 className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
@@ -2176,7 +2196,7 @@ export default function Home() {
                 }}
               >
                 <IconHelp />
-                帮助
+                甯姪
               </button>
               <button
                 className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
@@ -2184,7 +2204,7 @@ export default function Home() {
                 onClick={handleSignOut}
               >
                 <IconSignOut />
-                登出
+                鐧诲嚭
               </button>
             </div>
           </div>
@@ -2262,7 +2282,7 @@ export default function Home() {
           className='tapa-speed-menu fixed z-[80] w-[120px] rounded-lg border border-zinc-300 bg-white p-1.5 shadow-xl'
           style={{ left: speedMenuPosition.left, top: speedMenuPosition.top, transform: 'translateY(-100%)' }}
           role='menu'
-          aria-label='播放速度菜单'
+          aria-label='播放速度鑿滃崟'
         >
           {PLAYBACK_RATE_OPTIONS.map((rate) => (
             <button
@@ -2309,21 +2329,20 @@ export default function Home() {
             }
           >
             <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>首次使用引导</h2>
+              <h2 className='text-base font-semibold text-zinc-900'>棣栨浣跨敤寮曞</h2>
               <button
                 type='button'
                 onClick={() => finishOnboarding(true)}
                 className='inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
-                title='关闭引导'
-                aria-label='关闭引导'
+                title='鍏抽棴寮曞'
+                aria-label='鍏抽棴寮曞'
               >
                 <IconClose />
               </button>
             </div>
 
             <p className='mb-2 text-xs text-zinc-500'>
-              第 {onboardingStepIndex + 1} / {ONBOARDING_STEPS.length} 步
-            </p>
+              绗?{onboardingStepIndex + 1} / {ONBOARDING_STEPS.length} 姝?            </p>
             <h3 className='text-lg font-semibold text-zinc-900'>{currentOnboardingStep.title}</h3>
             <p className='mt-2 text-sm leading-6 text-zinc-700'>
               {currentOnboardingStep.description}
@@ -2340,7 +2359,7 @@ export default function Home() {
                 onClick={() => finishOnboarding(true)}
                 className='text-sm text-zinc-500 hover:text-zinc-700'
               >
-                跳过引导
+                璺宠繃寮曞
               </button>
               <div className='flex items-center gap-2'>
                 <button
@@ -2367,5 +2386,3 @@ export default function Home() {
     </main>
   );
 }
-
-
