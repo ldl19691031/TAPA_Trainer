@@ -42,6 +42,15 @@ type AnnotationRow = {
   created_at: string;
 };
 
+type VideoOverlayLayout = {
+  articleLeft: number;
+  articleTop: number;
+  viewportLeft: number;
+  viewportTop: number;
+  width: number;
+  height: number;
+};
+
 const MIN_SEGMENT_SECONDS = 2;
 const SNAP_STEP_SECONDS = 0.5;
 const MERGE_THRESHOLD = 0.5;
@@ -385,8 +394,10 @@ export default function Home() {
   const videoSelectRef = useRef<HTMLSelectElement | null>(null);
   const speedButtonRef = useRef<HTMLButtonElement | null>(null);
   const annotationButtonRef = useRef<HTMLButtonElement | null>(null);
+  const articleRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<Plyr | null>(null);
+  const [videoOverlayLayout, setVideoOverlayLayout] = useState<VideoOverlayLayout | null>(null);
 
   const selectedVideo = useMemo(
     () => videos.find((video) => video.id === selectedVideoId) ?? null,
@@ -566,6 +577,40 @@ export default function Home() {
     setIsSpeedMenuOpen(false);
   };
 
+  const updateVideoOverlayLayout = useCallback(() => {
+    const media = videoRef.current;
+    const article = articleRef.current;
+    if (!media || !article || media.videoWidth <= 0 || media.videoHeight <= 0) {
+      setVideoOverlayLayout(null);
+      return;
+    }
+    const mediaRect = media.getBoundingClientRect();
+    const articleRect = article.getBoundingClientRect();
+    const videoAspect = media.videoWidth / media.videoHeight;
+    const rectAspect = mediaRect.width / mediaRect.height;
+
+    let renderedWidth = mediaRect.width;
+    let renderedHeight = mediaRect.height;
+    let innerOffsetX = 0;
+    let innerOffsetY = 0;
+    if (rectAspect > videoAspect) {
+      renderedWidth = mediaRect.height * videoAspect;
+      innerOffsetX = (mediaRect.width - renderedWidth) / 2;
+    } else {
+      renderedHeight = mediaRect.width / videoAspect;
+      innerOffsetY = (mediaRect.height - renderedHeight) / 2;
+    }
+
+    setVideoOverlayLayout({
+      articleLeft: mediaRect.left - articleRect.left + innerOffsetX,
+      articleTop: mediaRect.top - articleRect.top + innerOffsetY,
+      viewportLeft: mediaRect.left + innerOffsetX,
+      viewportTop: mediaRect.top + innerOffsetY,
+      width: renderedWidth,
+      height: renderedHeight,
+    });
+  }, []);
+
   const seekBySeconds = (deltaSeconds: number) => {
     if (!videoRef.current && !playerRef.current) {
       return;
@@ -614,6 +659,16 @@ export default function Home() {
       }
     };
   }, [playUrl]);
+
+  useEffect(() => {
+    updateVideoOverlayLayout();
+    window.addEventListener('resize', updateVideoOverlayLayout);
+    window.addEventListener('scroll', updateVideoOverlayLayout, true);
+    return () => {
+      window.removeEventListener('resize', updateVideoOverlayLayout);
+      window.removeEventListener('scroll', updateVideoOverlayLayout, true);
+    };
+  }, [updateVideoOverlayLayout]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -668,6 +723,12 @@ export default function Home() {
     },
     [selectedVideoId, supabase],
   );
+
+  const selectPersonCandidate = useCallback((candidate: PersonCandidate) => {
+    setSelectedPersonTrackId(candidate.trackId);
+    setSelectedPersonBox(candidate.box);
+    setSelectedPersonTsSec(candidate.tsSec);
+  }, []);
 
   const openAnnotationPanel = () => {
     const current = videoRef.current?.currentTime ?? 0;
@@ -1056,7 +1117,10 @@ export default function Home() {
       </header>
 
       <section className='mx-auto w-full max-w-[1800px] px-4 py-3'>
-        <article className='tapa-player-shell relative overflow-hidden rounded-2xl border border-zinc-200 bg-black shadow-sm'>
+        <article
+            ref={articleRef}
+            className='tapa-player-shell relative overflow-hidden rounded-2xl border border-zinc-200 bg-black shadow-sm'
+          >
           <div>
             {loadingPlayUrl ? (
               <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center text-sm text-zinc-300'>
@@ -1068,6 +1132,7 @@ export default function Home() {
                 src={playUrl}
                 playsInline
                 preload='metadata'
+                onLoadedMetadata={updateVideoOverlayLayout}
                 onTimeUpdate={(event) => setCurrentVideoTime(event.currentTarget.currentTime)}
                 className='h-[calc(100vh-92px)] w-full bg-black'
               />
@@ -1080,7 +1145,7 @@ export default function Home() {
 
           {activePersonAnnotations.map((item) => {
             const box = item.person_box;
-            if (!box) {
+            if (!box || !videoOverlayLayout) {
               return null;
             }
             const labels = item.drivers
@@ -1091,10 +1156,10 @@ export default function Home() {
                 key={`person-overlay-${item.id}`}
                 className='pointer-events-none absolute z-10 rounded border-2 border-blue-400'
                 style={{
-                  left: `${box.left * 100}%`,
-                  top: `${box.top * 100}%`,
-                  width: `${box.width * 100}%`,
-                  height: `${box.height * 100}%`,
+                  left: videoOverlayLayout.articleLeft + box.left * videoOverlayLayout.width,
+                  top: videoOverlayLayout.articleTop + box.top * videoOverlayLayout.height,
+                  width: box.width * videoOverlayLayout.width,
+                  height: box.height * videoOverlayLayout.height,
                 }}
               >
                 <span className='absolute -top-7 left-0 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white shadow-sm'>
@@ -1239,7 +1304,51 @@ export default function Home() {
 
       {isAnnotationOpen ? (
         <div className='fixed inset-0 z-40 flex items-end justify-end bg-black/30 p-4 md:items-center'>
-          <section className='h-full w-full max-w-xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl md:h-auto md:max-h-[90vh] md:overflow-visible' role='dialog' aria-modal='true'>
+          {videoOverlayLayout ? (
+            <div className='pointer-events-none fixed inset-0 z-[45]'>
+              {personCandidates.map((candidate) => {
+                const selected = candidate.trackId === selectedPersonTrackId;
+                return (
+                  <button
+                    key={`video-candidate-${candidate.trackId}`}
+                    type='button'
+                    className={`pointer-events-auto fixed rounded border-2 ${
+                      selected
+                        ? 'border-blue-500 bg-blue-500/15'
+                        : 'border-emerald-400 bg-emerald-500/12'
+                    }`}
+                    style={{
+                      left:
+                        videoOverlayLayout.viewportLeft +
+                        candidate.box.left * videoOverlayLayout.width,
+                      top:
+                        videoOverlayLayout.viewportTop +
+                        candidate.box.top * videoOverlayLayout.height,
+                      width: candidate.box.width * videoOverlayLayout.width,
+                      height: candidate.box.height * videoOverlayLayout.height,
+                    }}
+                    onClick={() => selectPersonCandidate(candidate)}
+                    aria-label={`在视频中选择轨迹 ${candidate.trackId}`}
+                    title={`轨迹 ${candidate.trackId}`}
+                  >
+                    <span
+                      className={`absolute left-1 top-1 rounded px-1 text-[10px] font-semibold ${
+                        selected ? 'bg-blue-600 text-white' : 'bg-black/70 text-white'
+                      }`}
+                    >
+                      {selected ? `已选 #${candidate.trackId}` : `#${candidate.trackId}`}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
+          <section
+            className='relative z-50 h-full w-full max-w-xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl md:h-auto md:max-h-[90vh] md:overflow-visible'
+            role='dialog'
+            aria-modal='true'
+          >
             <div className='mb-3 flex items-center justify-between'>
               <h2 className='text-base font-semibold text-zinc-900'>标注</h2>
               <button
@@ -1317,64 +1426,26 @@ export default function Home() {
                   <p className='mb-2 text-xs text-zinc-600'>{personCandidateMessage}</p>
                 ) : null}
                 {personCandidates.length > 0 ? (
-                  <>
-                    <div className='relative aspect-video overflow-hidden rounded-md border border-zinc-300 bg-zinc-900'>
-                      {personCandidates.map((candidate) => {
-                        const selected = candidate.trackId === selectedPersonTrackId;
-                        return (
-                          <button
-                            key={`person-candidate-${candidate.trackId}`}
-                            type='button'
-                            className={`absolute rounded border-2 text-[10px] font-semibold ${
-                              selected
-                                ? 'border-blue-500 bg-blue-500/20 text-blue-100'
-                                : 'border-emerald-400 bg-emerald-500/20 text-emerald-100'
-                            }`}
-                            style={{
-                              left: `${candidate.box.left * 100}%`,
-                              top: `${candidate.box.top * 100}%`,
-                              width: `${candidate.box.width * 100}%`,
-                              height: `${candidate.box.height * 100}%`,
-                            }}
-                            onClick={() => {
-                              setSelectedPersonTrackId(candidate.trackId);
-                              setSelectedPersonBox(candidate.box);
-                              setSelectedPersonTsSec(candidate.tsSec);
-                            }}
-                            aria-label={`选择轨迹 ${candidate.trackId}`}
-                            title={`轨迹 ${candidate.trackId}`}
-                          >
-                            <span className='absolute left-1 top-1 rounded bg-black/60 px-1 text-[10px] text-white'>
-                              {selected ? `已选 #${candidate.trackId}` : `#${candidate.trackId}`}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className='mt-2 flex flex-wrap gap-1.5'>
-                      {personCandidates.map((candidate) => {
-                        const selected = candidate.trackId === selectedPersonTrackId;
-                        return (
-                          <button
-                            key={`person-chip-${candidate.trackId}`}
-                            type='button'
-                            className={`rounded-full border px-2 py-1 text-[11px] ${
-                              selected
-                                ? 'border-blue-600 bg-blue-50 text-blue-700'
-                                : 'border-zinc-300 bg-white text-zinc-700'
-                            }`}
-                            onClick={() => {
-                              setSelectedPersonTrackId(candidate.trackId);
-                              setSelectedPersonBox(candidate.box);
-                              setSelectedPersonTsSec(candidate.tsSec);
-                            }}
-                          >
-                            轨迹 #{candidate.trackId} · t={candidate.tsSec.toFixed(1)}s · {(candidate.score * 100).toFixed(0)}%
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </>
+                  <div className='mt-1 flex flex-wrap gap-1.5'>
+                    {personCandidates.map((candidate) => {
+                      const selected = candidate.trackId === selectedPersonTrackId;
+                      return (
+                        <button
+                          key={`person-chip-${candidate.trackId}`}
+                          type='button'
+                          className={`rounded-full border px-2 py-1 text-[11px] ${
+                            selected
+                              ? 'border-blue-600 bg-blue-50 text-blue-700'
+                              : 'border-zinc-300 bg-white text-zinc-700'
+                          }`}
+                          onClick={() => selectPersonCandidate(candidate)}
+                        >
+                          轨迹 #{candidate.trackId} · t={candidate.tsSec.toFixed(1)}s ·{' '}
+                          {(candidate.score * 100).toFixed(0)}%
+                        </button>
+                      );
+                    })}
+                  </div>
                 ) : (
                   <p className='text-xs text-zinc-500'>当前时间未找到离线人体候选，仍可只记录驱力与时间片段。</p>
                 )}
