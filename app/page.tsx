@@ -4,9 +4,11 @@ import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, us
 import { createPortal } from 'react-dom';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import type Plyr from 'plyr';
+import { AnnotationOverlay } from '../components/annotation/AnnotationOverlay';
 import { MyAnnotationsDrawer } from '../components/annotation/MyAnnotationsDrawer';
 import { MenuDrawer } from '../components/layout/MenuDrawer';
 import { TopBar } from '../components/layout/TopBar';
+import { VideoLibraryDrawer } from '../components/library/VideoLibraryDrawer';
 import { OnboardingOverlay } from '../components/onboarding/OnboardingOverlay';
 import { getSupabaseBrowserClient } from '../lib/supabase-browser';
 import {
@@ -16,9 +18,7 @@ import {
   type MergeCluster,
 } from '../lib/annotation-utils';
 import {
-  CUE_ROWS,
   DRIVE_LABEL_MAP,
-  DRIVE_OPTIONS,
 } from '../lib/drives';
 import {
   ONBOARDING_DEMO_VIDEO_KEYWORD,
@@ -1519,211 +1519,48 @@ export default function Home() {
     onboardingStepIndex,
   ]);
 
-  const annotationOverlay = isAnnotationOpen ? (
-    <div
-      className={`fixed inset-0 z-40 flex bg-black/30 ${
-        isPlayerFullscreen ? 'items-stretch justify-end p-0' : 'items-end justify-end p-4 md:items-center'
-      }`}
-    >
-      {videoOverlayLayout ? (
-        <div className='pointer-events-none fixed inset-0 z-[45]'>
-          {isPersonPicking ? (
-            <button
-              type='button'
-              className='pointer-events-auto fixed inset-0'
-              aria-label='退出选人模式'
-              onClick={() => setIsPersonPicking(false)}
-            />
-          ) : null}
-          {(isPersonPicking
-            ? personCandidates
-            : personCandidates.filter((candidate) => candidate.trackId === selectedPersonTrackId)
-          ).map((candidate) => {
-            const selected = candidate.trackId === selectedPersonTrackId;
-            return (
-              <button
-                key={`video-candidate-${candidate.trackId}`}
-                type='button'
-                className={`pointer-events-auto fixed rounded border-2 ${
-                  selected
-                    ? 'border-blue-500 bg-blue-500/15'
-                    : 'border-emerald-400 bg-emerald-500/12'
-                }`}
-                style={{
-                  left:
-                    videoOverlayLayout.viewportLeft +
-                    candidate.box.left * videoOverlayLayout.width,
-                  top:
-                    videoOverlayLayout.viewportTop +
-                    candidate.box.top * videoOverlayLayout.height,
-                  width: candidate.box.width * videoOverlayLayout.width,
-                  height: candidate.box.height * videoOverlayLayout.height,
-                }}
-                onClick={() => {
-                  selectPersonCandidate(candidate);
-                  setIsPersonPicking(false);
-                }}
-                aria-label={'在视频中选择轨迹 ' + candidate.trackId}
-                title={'选择轨迹 #' + candidate.trackId}
-              >
-                <span
-                  className={`absolute left-1 top-1 rounded px-1 text-[10px] font-semibold ${
-                    selected ? 'bg-blue-600 text-white' : 'bg-black/70 text-white'
-                  }`}
-                >
-                  {selected ? '已选 #' + candidate.trackId : '#' + candidate.trackId}
-                </span>
-              </button>
-            );
-          })}
-          {!isPersonPicking && selectedPersonBox ? (
-            <div
-              className='pointer-events-none fixed rounded border-2 border-blue-500 bg-blue-500/12'
-              style={{
-                left: videoOverlayLayout.viewportLeft + selectedPersonBox.left * videoOverlayLayout.width,
-                top: videoOverlayLayout.viewportTop + selectedPersonBox.top * videoOverlayLayout.height,
-                width: selectedPersonBox.width * videoOverlayLayout.width,
-                height: selectedPersonBox.height * videoOverlayLayout.height,
-              }}
-            />
-          ) : null}
-        </div>
-      ) : null}
-
-      {!isPersonPicking ? (
-        <section
-          className={`relative z-50 w-full border border-zinc-200 bg-white p-5 shadow-2xl ${
-            isPlayerFullscreen
-              ? 'h-full max-w-md overflow-y-auto rounded-none'
-              : 'h-full max-w-xl overflow-y-auto rounded-2xl md:h-auto md:max-h-[90vh] md:overflow-visible'
-          }`}
-          role='dialog'
-          aria-modal='true'
-        >
-          <div className='mb-3 flex items-center justify-between'>
-            <h2 className='text-base font-semibold text-zinc-900'>{'\u6807\u6ce8'}</h2>
-            <button
-              className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
-              onClick={() => setIsAnnotationOpen(false)}
-              type='button'
-              aria-label='关闭'
-              title='关闭'
-            >
-              <IconClose />
-            </button>
-          </div>
-
-          <form className='space-y-3' onSubmit={handleSubmitAnnotation}>
-            <div className='flex flex-wrap gap-2'>
-              {DRIVE_OPTIONS.map((driver, index) => {
-                const active = selectedDrivers.includes(driver.id);
-                return (
-                  <button
-                    ref={index === 0 ? firstDriverButtonRef : null}
-                    key={driver.id}
-                    type='button'
-                    onClick={() => toggleDriver(driver.id)}
-                    className={`group relative rounded-full border px-3 py-1.5 text-sm transition ${
-                      active
-                        ? 'border-blue-600 bg-blue-50 text-blue-700'
-                        : 'border-zinc-300 text-zinc-800 hover:bg-zinc-50'
-                    }`}
-                  >
-                    <span className='font-medium'>{driver.label}</span>
-                    <span className='pointer-events-none absolute left-0 top-full z-[90] mt-2 hidden w-[360px] max-w-[78vw] rounded-xl border border-zinc-200 bg-white p-2.5 text-xs text-zinc-700 shadow-md group-hover:block'>
-                      <span className='grid gap-2'>
-                        {CUE_ROWS.map((row) => (
-                          <span
-                            key={row.key}
-                            className='flex items-start gap-2 rounded-lg bg-zinc-50 px-2 py-1.5'
-                          >
-                            <span className='mt-0.5 inline-flex h-5 w-5 flex-none items-center justify-center rounded-full bg-white text-[11px] font-semibold text-zinc-700 shadow-sm'>
-                              {row.icon}
-                            </span>
-                            <span className='leading-5 text-zinc-700'>{driver.cues[row.key]}</span>
-                          </span>
-                        ))}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className='flex justify-end'>
-              <button
-                type='button'
-                className='rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 disabled:opacity-50'
-                disabled={isLoadingPersonCandidates}
-                onClick={() => void loadPersonCandidatesForTime(videoRef.current?.currentTime ?? currentVideoTime)}
-              >
-                {isLoadingPersonCandidates ? '读取中...' : '刷新候选'}
-              </button>
-            </div>
-
-            {!quickMode ? (
-              <label className='text-sm text-zinc-700'>
-                {'\u8bc4\u8bba'}
-                <textarea
-                  className='mt-1 h-24 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
-                  maxLength={MAX_COMMENT_LENGTH}
-                  value={comment}
-                  onChange={(event) => setComment(event.target.value)}
-                />
-              </label>
-            ) : null}
-
-            <div className='flex items-center gap-2'>
-              <button
-                ref={personPickButtonRef}
-                type='button'
-                className={`inline-flex h-10 w-10 items-center justify-center rounded-md border text-zinc-700 ${
-                  isPersonPicking ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-zinc-300 hover:bg-zinc-50'
-                }`}
-                title='选择标注对象'
-                aria-label='选择标注对象'
-                onClick={() => void startPersonPicking()}
-              >
-                <IconUserTag />
-              </button>
-              <button
-                ref={saveAnnotationButtonRef}
-                className='w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60'
-                type='submit'
-                disabled={saving || selectedDrivers.length === 0 || !selectedVideoId}
-              >
-                {saving
-                  ? '\u4fdd\u5b58\u4e2d...'
-                  : editingAnnotationId
-                    ? '\u4fdd\u5b58\u4fee\u6539'
-                    : '\u4fdd\u5b58\u6807\u6ce8'}
-              </button>
-            </div>
-            {editingAnnotationId ? (
-              <button
-                type='button'
-                className='text-xs text-zinc-500 underline underline-offset-2 hover:text-zinc-700'
-                onClick={() => {
-                  setEditingAnnotationId(null);
-                  setSelectedDrivers([]);
-                  setComment('');
-                  setOpenAnnotationActionId(null);
-                }}
-              >
-                {'\u53d6\u6d88\u7f16\u8f91'}
-              </button>
-            ) : null}
-          </form>
-
-          {queryError ? (
-            <p className='mt-3 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
-              {queryError}
-            </p>
-          ) : null}
-        </section>
-      ) : null}
-    </div>
-  ) : null;
+  const annotationOverlay = (
+    <AnnotationOverlay
+      isOpen={isAnnotationOpen}
+      isPlayerFullscreen={isPlayerFullscreen}
+      videoOverlayLayout={videoOverlayLayout}
+      isPersonPicking={isPersonPicking}
+      personCandidates={personCandidates}
+      selectedPersonTrackId={selectedPersonTrackId}
+      selectedPersonBox={selectedPersonBox}
+      selectedDrivers={selectedDrivers}
+      isLoadingPersonCandidates={isLoadingPersonCandidates}
+      quickMode={quickMode}
+      comment={comment}
+      maxCommentLength={MAX_COMMENT_LENGTH}
+      saving={saving}
+      selectedVideoId={selectedVideoId}
+      editingAnnotationId={editingAnnotationId}
+      queryError={queryError}
+      firstDriverButtonRef={firstDriverButtonRef}
+      personPickButtonRef={personPickButtonRef}
+      saveAnnotationButtonRef={saveAnnotationButtonRef}
+      closeIcon={<IconClose />}
+      userTagIcon={<IconUserTag />}
+      onClose={() => setIsAnnotationOpen(false)}
+      onDismissPersonPicking={() => setIsPersonPicking(false)}
+      onSelectPersonCandidate={(candidate) => {
+        selectPersonCandidate(candidate);
+        setIsPersonPicking(false);
+      }}
+      onSubmit={handleSubmitAnnotation}
+      onToggleDriver={toggleDriver}
+      onReloadCandidates={() => void loadPersonCandidatesForTime(videoRef.current?.currentTime ?? currentVideoTime)}
+      onCommentChange={setComment}
+      onStartPersonPicking={() => void startPersonPicking()}
+      onCancelEdit={() => {
+        setEditingAnnotationId(null);
+        setSelectedDrivers([]);
+        setComment('');
+        setOpenAnnotationActionId(null);
+      }}
+    />
+  );
 
   if (authLoading) {
     return <main className='mx-auto flex min-h-screen items-center justify-center'>加载中...</main>;
@@ -1903,71 +1740,23 @@ export default function Home() {
         onSignOut={handleSignOut}
       />
 
-      {isLibraryOpen ? (
-        <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
-          <div className='ml-auto h-full w-full max-w-xl overflow-y-auto bg-white p-5 shadow-2xl'>
-            <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-lg font-semibold text-zinc-900'>{'\u89c6\u9891\u5e93'}</h2>
-              <button
-                className='rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-50'
-                onClick={() => setIsLibraryOpen(false)}
-                type='button'
-              >
-                {'\u5173\u95ed'}
-              </button>
-            </div>
-            <label className='text-sm text-zinc-700'>
-              {'\u9009\u62e9\u89c6\u9891'}
-              <select
-                className='mt-1 w-full rounded-md border border-zinc-300 px-2 py-2 text-sm'
-                value={selectedVideo?.id ?? ''}
-                onChange={(event) => {
-                  setSelectedVideoId(event.target.value);
-                  setIsLibraryOpen(false);
-                }}
-              >
-                {videos.map((video) => (
-                  <option key={video.id} value={video.id}>
-                    {video.title} [{video.storage_key ?? '\u672a\u914d\u7f6e key'}]
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className='my-4 border-t border-zinc-200' />
-
-            <h3 className='text-base font-semibold text-zinc-900'>{'\u65b0\u589e\u6258\u7ba1\u89c6\u9891'}</h3>
-            <form className='mt-3 grid gap-3' onSubmit={handleAddVideo}>
-              <input
-                className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-                placeholder='标题'
-                required
-                value={videoTitle}
-                onChange={(event) => setVideoTitle(event.target.value)}
-              />
-              <input
-                className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-                placeholder='存储 key，例如 videos/sample-001.mp4'
-                required
-                value={videoStorageKey}
-                onChange={(event) => setVideoStorageKey(event.target.value)}
-              />
-              <input
-                className='rounded-md border border-zinc-300 px-3 py-2 text-sm'
-                placeholder='原始来源 URL（可选）'
-                value={videoSourceUrl}
-                onChange={(event) => setVideoSourceUrl(event.target.value)}
-              />
-              <button
-                className='rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white'
-                type='submit'
-              >
-                {'\u4fdd\u5b58\u89c6\u9891\u4fe1\u606f'}
-              </button>
-            </form>
-        </div>
-        </div>
-      ) : null}
+      <VideoLibraryDrawer
+        isOpen={isLibraryOpen}
+        videos={videos}
+        selectedVideoId={selectedVideo?.id ?? ''}
+        videoTitle={videoTitle}
+        videoStorageKey={videoStorageKey}
+        videoSourceUrl={videoSourceUrl}
+        onClose={() => setIsLibraryOpen(false)}
+        onSelectVideo={(videoId) => {
+          setSelectedVideoId(videoId);
+          setIsLibraryOpen(false);
+        }}
+        onTitleChange={setVideoTitle}
+        onStorageKeyChange={setVideoStorageKey}
+        onSourceUrlChange={setVideoSourceUrl}
+        onSubmit={handleAddVideo}
+      />
 
       {isSpeedMenuOpen && speedMenuPosition ? (
         <div
