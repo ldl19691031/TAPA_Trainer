@@ -4,6 +4,8 @@ import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, us
 import { createPortal } from 'react-dom';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import type Plyr from 'plyr';
+import { TopBar } from '../components/layout/TopBar';
+import { OnboardingOverlay } from '../components/onboarding/OnboardingOverlay';
 import { getSupabaseBrowserClient } from '../lib/supabase-browser';
 import {
   buildMergeClusters,
@@ -11,6 +13,19 @@ import {
   normalizeSegment,
   type MergeCluster,
 } from '../lib/annotation-utils';
+import {
+  CUE_ROWS,
+  DRIVE_LABEL_MAP,
+  DRIVE_OPTIONS,
+} from '../lib/drives';
+import {
+  ONBOARDING_DEMO_VIDEO_KEYWORD,
+  ONBOARDING_DEMO_VIDEO_SEEK_SEC,
+  ONBOARDING_STEPS,
+  ONBOARDING_STORAGE_KEY,
+  ONBOARDING_VERSION,
+  type OnboardingTargetId,
+} from '../lib/onboarding';
 import {
   pickNearestPersonFrameCandidates,
   type NormalizedBox,
@@ -57,131 +72,11 @@ const MIN_SEGMENT_SECONDS = 2;
 const SNAP_STEP_SECONDS = 0.5;
 const MERGE_THRESHOLD = 0.5;
 const MAX_COMMENT_LENGTH = 1000;
-const ONBOARDING_STORAGE_KEY = 'tapa_onboarding_seen_version';
-const ONBOARDING_VERSION = 'v4';
 const MIN_PLAY_URL_LOADING_MS = 450;
-const ONBOARDING_DEMO_VIDEO_KEYWORD = '\u6797\u4f9d\u6668';
-const ONBOARDING_DEMO_VIDEO_SEEK_SEC = 255;
 const PLAYBACK_RATE_OPTIONS = [0.2, 0.3, 0.5, 0.75, 1] as const;
 const SPEED_MENU_WIDTH = 120;
 const TAGS_ICON_SVG =
   "<svg viewBox='0 0 24 24' aria-hidden='true' class='h-4 w-4'><path d='M20 10.5L13.5 4H6v7.5L12.5 18 20 10.5zm-10.5-3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM8 14l4.5 4.5a2 2 0 0 0 2.8 0l5.2-5.2a2 2 0 0 0 0-2.8L16 6' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>";
-
-type OnboardingTargetId =
-  | 'video_select'
-  | 'transport_controls'
-  | 'annotation_button'
-  | 'person_pick'
-  | 'driver_select'
-  | 'save_annotation'
-  | 'my_annotations_button'
-  | 'annotation_action'
-  | 'annotation_card'
-  | 'menu_button';
-
-type OnboardingStep = {
-  id: string;
-  title: string;
-  description: string;
-  targetId: OnboardingTargetId;
-  requireAction: boolean;
-  actionHint?: string;
-};
-
-const ONBOARDING_STEPS: OnboardingStep[] = [
-  {
-    id: 'switch_video',
-    title: '\u5207\u6362\u89c6\u9891',
-    description:
-      '\u5728\u9875\u9762\u5de6\u4e0a\u89d2\u901a\u8fc7\u4e0b\u62c9\u6846\u5207\u6362\u5f53\u524d\u8bad\u7ec3\u89c6\u9891\u3002',
-    targetId: 'video_select',
-    requireAction: true,
-    actionHint:
-      '\u8bf7\u70b9\u51fb\u4e00\u6b21\u5de6\u4e0a\u89d2\u89c6\u9891\u4e0b\u62c9\u6846\uff0c\u5b8c\u6210\u540e\u518d\u8fdb\u5165\u4e0b\u4e00\u6b65\u3002',
-  },
-  {
-    id: 'playback_controls',
-    title: '\u64ad\u653e\u63a7\u5236',
-    description:
-      '\u8fd9\u4e00\u6392\u6309\u94ae\u5305\u542b -3s\u3001+3s \u548c\u901f\u5ea6\u3002\u53ef\u7528\u4e8e\u7ec6\u770b\u67d0\u4e2a\u7247\u6bb5\u3002',
-    targetId: 'transport_controls',
-    requireAction: true,
-    actionHint:
-      '\u8bf7\u70b9\u51fb\u4e00\u6b21 -3s\u3001+3s \u6216\u901f\u5ea6\u6309\u94ae\u4e2d\u7684\u4efb\u610f\u4e00\u4e2a\u3002',
-  },
-  {
-    id: 'open_annotation_on_demo',
-    title: '\u6253\u5f00\u793a\u4f8b\u6807\u6ce8',
-    description:
-      '\u73b0\u5728\u4f1a\u81ea\u52a8\u5207\u6362\u5230\u300c\u6797\u4f9d\u6668\u300d\u89c6\u9891\u7684 4:15\u3002\u8bf7\u70b9\u51fb\u63a7\u5236\u6761\u4e0a\u7684\u6807\u6ce8\u6309\u94ae\u3002',
-    targetId: 'annotation_button',
-    requireAction: true,
-  },
-  {
-    id: 'select_person',
-    title: '\u9009\u62e9\u89c2\u5bdf\u5bf9\u8c61',
-    description:
-      '\u70b9\u51fb\u4eba\u7269\u9009\u62e9\u6309\u94ae\u540e\uff0c\u5728\u89c6\u9891\u753b\u9762\u4e2d\u70b9\u51fb\u4f60\u8981\u6807\u6ce8\u7684\u90a3\u4e2a\u4eba\u3002',
-    targetId: 'person_pick',
-    requireAction: true,
-  },
-  {
-    id: 'select_drive',
-    title: '\u9009\u62e9\u9a71\u529b',
-    description: '\u5728\u6807\u6ce8\u9762\u677f\u4e2d\u9009\u62e9\u4e00\u4e2a\u6216\u591a\u4e2a\u9a71\u529b\u3002',
-    targetId: 'driver_select',
-    requireAction: true,
-  },
-  {
-    id: 'save_annotation',
-    title: '\u4fdd\u5b58\u6807\u6ce8',
-    description: '\u70b9\u51fb\u4fdd\u5b58\u6807\u6ce8\u6309\u94ae\uff0c\u5c06\u5f53\u524d\u6807\u6ce8\u4fdd\u5b58\u5230\u670d\u52a1\u7aef\u3002',
-    targetId: 'save_annotation',
-    requireAction: true,
-  },
-  {
-    id: 'open_annotation_history',
-    title: '\u6253\u5f00\u6807\u6ce8\u5217\u8868',
-    description:
-      '\u70b9\u51fb\u9876\u90e8\u53f3\u4e0a\u89d2\u7684\u6807\u6ce8\u5217\u8868\u6309\u94ae\uff0c\u67e5\u770b\u4f60\u521a\u624d\u4fdd\u5b58\u7684\u6807\u6ce8\u5361\u7247\u3002',
-    targetId: 'my_annotations_button',
-    requireAction: true,
-  },
-  {
-    id: 'open_annotation_action_menu',
-    title: '\u67e5\u770b\u5220\u9664\u5165\u53e3',
-    description:
-      '\u70b9\u51fb\u6807\u6ce8\u5361\u7247\u53f3\u4e0a\u89d2\u7684\u300c\u6807\u6ce8\u4fee\u8ba2\u300d\u6309\u94ae\uff0c\u5373\u53ef\u770b\u5230\u7f16\u8f91\u548c\u5220\u9664\u5165\u53e3\u3002\u4f60\u4e0d\u9700\u8981\u771f\u6b63\u6267\u884c\u5220\u9664\u3002',
-    targetId: 'annotation_action',
-    requireAction: true,
-    actionHint:
-      '\u8bf7\u70b9\u5f00\u4efb\u610f\u4e00\u5f20\u6807\u6ce8\u5361\u7247\u53f3\u4e0a\u89d2\u7684\u300c\u6807\u6ce8\u4fee\u8ba2\u300d\u3002',
-  },
-  {
-    id: 'jump_by_annotation_card',
-    title: '\u901a\u8fc7\u5361\u7247\u8df3\u8f6c',
-    description:
-      '\u70b9\u51fb\u4efb\u610f\u4e00\u5f20\u6807\u6ce8\u5361\u7247\uff0c\u64ad\u653e\u5668\u4f1a\u8df3\u8f6c\u5230\u5bf9\u5e94\u65f6\u95f4\u70b9\u3002',
-    targetId: 'annotation_card',
-    requireAction: true,
-  },
-  {
-    id: 'open_hamburger_menu',
-    title: '\u6253\u5f00\u6c49\u5821\u83dc\u5355',
-    description:
-      '\u6700\u540e\u70b9\u51fb\u53f3\u4e0a\u89d2\u6c49\u5821\u83dc\u5355\uff0c\u5237\u65b0\u64ad\u653e\u94fe\u63a5\u3001\u5e2e\u52a9\u3001\u767b\u51fa\u7b49\u9009\u9879\u90fd\u5728\u8fd9\u91cc\u3002',
-    targetId: 'menu_button',
-    requireAction: true,
-  },
-] as const;
-
-type DriveCue = {
-  lexicon: string;
-  tone: string;
-  gesture: string;
-  posture: string;
-  face: string;
-};
 
 function IconRefresh() {
   return (
@@ -313,75 +208,6 @@ function IconMoreVertical() {
   );
 }
 
-const CUE_ROWS: Array<{ key: keyof DriveCue; icon: string }> = [
-  { key: 'lexicon', icon: '\u{1F4AC}' }, // speech balloon
-  { key: 'tone', icon: '\u{1F3B5}' }, // musical note
-  { key: 'gesture', icon: '\u{1F44B}' }, // waving hand
-  { key: 'posture', icon: '\u{1F9CD}' }, // standing person
-  { key: 'face', icon: '\u{1F642}' }, // slight smile
-];
-
-const DRIVE_OPTIONS = [
-  {
-    id: 'be_perfect',
-    label: '\u8981\u5b8c\u7f8e',
-    cues: {
-      lexicon: '\u5e38\u7528\u63d2\u5165\u8bed\u3001\u5217\u70b9\u6570\uff0c\u5982\u201c\u548c\u539f\u672c\u4e00\u6837\u201d\u201c\u6b63\u5982\u6211\u4eec\u6240\u89c1\u201d\u201c\u4e5f\u5c31\u662f\u8bf4\u201d',
-      tone: '\u6e05\u8106\u3001\u5e73\u7f13\u3001\u8282\u594f\u826f\u597d\uff0c\u53d1\u97f3\u51c6\u786e\u6e05\u6670',
-      gesture: '\u624b\u6307\u6bd4\u5212\uff0c\u62c7\u6307\u4e0e\u98df\u6307\u634f\u6210\u201c\u5854\u5c16\u201d(V)\u5f62',
-      posture: '\u59ff\u6001\u633a\u76f4\uff0c\u5de6\u53f3\u8f83\u5747\u8861',
-      face: '\u505c\u987f\u65f6\u76ee\u5149\u5f80\u4e0a\u4fa7\uff08\u5f88\u5c11\u5411\u4e0b\uff09\uff0c\u5634\u7565\u7d27\u7ef7\uff0c\u5634\u89d2\u5411\u5916\u4fa7\u62c9',
-    },
-  },
-  {
-    id: 'be_strong',
-    label: '\u8981\u575a\u5f3a',
-    cues: {
-      lexicon: '\u5e38\u89c1\u201c\u758f\u8fdc\u201d\uff0c\u6216\u201c\u4f60\u8ba9\u6211\u5f88\u751f\u6c14/\u65e0\u804a/\u96be\u53d7\u201d',
-      tone: '\u5e73\u7f13\u3001\u5355\u8c03\uff0c\u901a\u5e38\u97f3\u91cf\u8f83\u4f4e',
-      gesture: '\u5f88\u5c11\u6216\u57fa\u672c\u6ca1\u6709\u624b\u52bf',
-      posture: '\u5b89\u9759\u3001\u5c01\u95ed\uff08\u624b\u81c2\u4ea4\u53c9/\u53cc\u817f\u4ea4\u53c9\uff09',
-      face: '\u5b89\u9759\uff0c\u9762\u90e8\u8868\u60c5\u8f83\u5c11',
-    },
-  },
-  {
-    id: 'try_hard',
-    label: '\u8981\u52aa\u529b\u8bd5',
-    cues: {
-      lexicon: '\u5e38\u6709\u201c\u54c8\uff1f\u554a\uff1f\u4ec0\u4e48\uff1f\u201d\u3001\u201c\u6211\u4f1a\u8bd5\u7740...\u201d\u3001\u201c\u6211\u4e0d\u80fd/\u8fd9\u5f88\u96be/\u6211\u4e0d\u61c2\u201d',
-      tone: '\u7d27\u5f20\u3001\u987f\u632b\u3001\u538b\u6291\u6216\u6c89\u95f7',
-      gesture: '\u624b\u653e\u5728\u5934\u4fa7\uff08\u50cf\u5728\u52aa\u529b\u542c\u6216\u770b\u5230\uff09\uff0c\u6216\u7d27\u63e1\u62f3\u5934',
-      posture: '\u4e0a\u8eab\u524d\u503e\uff0c\u542b\u80f8\u3001\u5f13\u80cc\u3001\u5f13\u8eab',
-      face: '\u7eb1\u7709\uff08\u9f3b\u6881\u4e0a\u65b9\u5f62\u6210\u4e24\u6761\u575a\u76f4\u7ebf\uff09',
-    },
-  },
-  {
-    id: 'please_others',
-    label: '\u8981\u8ba8\u597d',
-    cues: {
-      lexicon: '\u5e38\u6709\u9ad8\u4f4e\u8d77\u4f0f\u7684\u5ba2\u6c14\u8868\u8fbe\uff0c\u5982\u201c\u53ef\u4ee5\u5417\uff1f\u884c\u4e86\u5417\uff1f\u201d\u201c\u5dee\u4e0d\u591a\u201d\u201c\u55ef\uff1f\u201d',
-      tone: '\u504f\u9ad8\u3001\u53e5\u5b50\u77ed\uff0c\u53e5\u5c3e\u8bed\u8c03\u4e0a\u626c',
-      gesture: '\u70b9\u5934\uff0c\u624b\u5f80\u5916\u4f38\uff08\u638c\u5fc3\u5411\u4e0a\uff09',
-      posture: '\u80a9\u8180\u524d\u503e\uff0c\u8eab\u4f53\u9760\u5411\u4ed6\u4eba',
-      face: '\u62ac\u7709\uff0c\u989d\u5934\u5f62\u6210\u201c\u62ac\u5934\u7eb9\u201d\uff0c\u7b11\u5bb9\u7d27\u5f20\uff0c\u53ef\u89c1\u7259\u9f7f\uff0c\u8138\u90e8\u671d\u4e0b',
-    },
-  },
-  {
-    id: 'hurry_up',
-    label: '\u8981\u8fc5\u901f',
-    cues: {
-      lexicon: '\u5e38\u51fa\u73b0\u201c\u6211\u4eec\u5feb\u8d70\uff0c\u5fc5\u987b\u52a0\u901f\uff0c\u5feb\u70b9\uff0c\u6ca1\u65f6\u95f4\u4e86\u201d',
-      tone: '\u673a\u5173\u67aa\u5f0f\uff0c\u65ad\u97f3\u3001\u8bcd\u7ec4\u8fde\u53d1',
-      gesture: '\u8f7b\u6572\u624b\u6307\uff0c\u6446\u52a8\u53cc\u811a\uff0c\u8e01\u52a8\u8eab\u4f53',
-      posture: '\u8e81\u52a8\u4e0d\u5b89\uff0c\u4e0d\u65ad\u53d8\u6362\u59ff\u52bf',
-      face: '\u9891\u7e41\u3001\u5feb\u901f\u5730\u79fb\u52a8\u76ee\u5149',
-    },
-  },
-] as const;
-
-const DRIVE_LABEL_MAP = Object.fromEntries(
-  DRIVE_OPTIONS.map((item) => [item.id, item.label]),
-) as Record<string, string>;
 
 async function loadVideos(supabase: SupabaseClient): Promise<{ rows: VideoRow[]; error: string | null }> {
   const { data, error } = await supabase
@@ -1142,8 +968,8 @@ export default function Home() {
 
       const backButton = getOrCreateButton('back');
       backButton.textContent = '-3s';
-      backButton.title = '?? 3 ?';
-      backButton.setAttribute('aria-label', '?? 3 ?');
+      backButton.title = '\u540e\u9000 3 \u79d2';
+      backButton.setAttribute('aria-label', '\u540e\u9000 3 \u79d2');
       backButton.onclick = () => {
         markOnboardingAction('transport_controls');
         seekBySeconds(-3);
@@ -1151,8 +977,8 @@ export default function Home() {
 
       const forwardButton = getOrCreateButton('forward');
       forwardButton.textContent = '+3s';
-      forwardButton.title = '?? 3 ?';
-      forwardButton.setAttribute('aria-label', '?? 3 ?');
+      forwardButton.title = '\u524d\u8fdb 3 \u79d2';
+      forwardButton.setAttribute('aria-label', '\u524d\u8fdb 3 \u79d2');
       forwardButton.onclick = () => {
         markOnboardingAction('transport_controls');
         seekBySeconds(3);
@@ -1160,8 +986,8 @@ export default function Home() {
 
       const speedButton = getOrCreateButton('speed');
       speedButton.textContent = '\u23F1';
-      speedButton.title = '鎾斁閫熷害';
-      speedButton.setAttribute('aria-label', '鎾斁閫熷害');
+      speedButton.title = '播放速度';
+      speedButton.setAttribute('aria-label', '播放速度');
       speedButton.onclick = () => {
         markOnboardingAction('transport_controls');
         toggleSpeedMenu();
@@ -1170,8 +996,8 @@ export default function Home() {
 
       const annotationButton = getOrCreateButton('annotation');
       annotationButton.innerHTML = TAGS_ICON_SVG;
-      annotationButton.title = '鎵撳紑鏍囨敞';
-      annotationButton.setAttribute('aria-label', '鎵撳紑鏍囨敞');
+      annotationButton.title = '打开标注';
+      annotationButton.setAttribute('aria-label', '打开标注');
       annotationButton.onclick = () => {
         markOnboardingAction('annotation_button');
         openAnnotationPanel();
@@ -1905,11 +1731,11 @@ export default function Home() {
     return (
       <main className='mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-4 py-10'>
         <section className='w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-sm'>
-          <h1 className='text-xl font-semibold text-zinc-900'>{'\u9a71\u529b\u8bad\u7ec3'}</h1>
-          <p className='mt-2 text-sm text-zinc-600'>{'\u4f7f\u7528 Magic Link \u767b\u5f55\uff0c\u767b\u5f55\u540e\u4f1a\u4fdd\u6301\u4f1a\u8bdd\u3002'}</p>
+          <h1 className='text-xl font-semibold text-zinc-900'>{'驱力训练'}</h1>
+          <p className='mt-2 text-sm text-zinc-600'>{'使用 Magic Link 登录，登录后会保持会话。'}</p>
           {!envReady ? (
             <p className='mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
-              {'\u7f3a\u5c11 NEXT_PUBLIC_SUPABASE_URL \u6216 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY\u3002'}            </p>
+              {'缺少 NEXT_PUBLIC_SUPABASE_URL 或 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。'}            </p>
           ) : null}
           <form className='mt-4 space-y-3' onSubmit={handleSendMagicLink}>
             <input
@@ -1926,10 +1752,10 @@ export default function Home() {
               disabled={authSending || magicCooldown > 0}
             >
               {authSending
-                ? '\u53d1\u9001\u4e2d...'
+                ? '发送中...'
                 : magicCooldown > 0
-                  ? magicCooldown + 's ' + '\u540e\u91cd\u8bd5'
-                  : '\u53d1\u9001 Magic Link'}
+                  ? magicCooldown + 's ' + '后重试'
+                  : '发送 Magic Link'}
             </button>
           </form>
           {authMessage ? <p className='mt-3 text-sm text-zinc-700'>{authMessage}</p> : null}
@@ -1940,59 +1766,28 @@ export default function Home() {
 
   return (
     <main className='min-h-screen bg-zinc-100'>
-      <header className='sticky top-0 z-30 border-b border-zinc-200 bg-white/95 backdrop-blur'>
-        <div className='mx-auto flex h-14 w-full max-w-[1800px] items-center justify-between px-4'>
-          <div className='flex min-w-0 items-center gap-3'>
-            <h1 className='whitespace-nowrap text-sm font-semibold tracking-wide text-zinc-900'>椹卞姏璁粌</h1>
-            <select
-              ref={videoSelectRef}
-              className='w-[240px] max-w-[52vw] truncate rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-700'
-              value={selectedVideo?.id ?? ''}
-              onClick={() => markOnboardingAction('video_select')}
-              onChange={(event) => {
-                markOnboardingAction('video_select');
-                setSelectedVideoId(event.target.value);
-              }}
-              title='鍒囨崲瑙嗛'
-            >
-              {videos.length === 0 ? <option value=''>鏆傛棤瑙嗛</option> : null}
-              {videos.map((video) => (
-                <option key={video.id} value={video.id}>
-                  {video.title}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className='flex items-center gap-2'>
-            <button
-              ref={myAnnotationsButtonRef}
-              className='inline-flex items-center justify-center rounded-md border border-zinc-300 px-2 py-2 text-zinc-700 hover:bg-zinc-50'
-              type='button'
-              onClick={() => {
-                markOnboardingAction('my_annotations_button');
-                setIsMyAnnotationsOpen(true);
-              }}
-              title='鎴戠殑鏍囨敞'
-              aria-label='鎴戠殑鏍囨敞'
-            >
-              <IconList />
-            </button>
-            <button
-              ref={menuButtonRef}
-              className='inline-flex items-center justify-center rounded-md border border-zinc-300 px-2 py-2 text-zinc-700 hover:bg-zinc-50'
-              type='button'
-              onClick={() => {
-                markOnboardingAction('menu_button');
-                setIsMenuOpen(true);
-              }}
-              title='鎵撳紑鑿滃崟'
-              aria-label='鎵撳紑鑿滃崟'
-            >
-              <IconMenu />
-            </button>
-          </div>
-        </div>
-      </header>
+      <TopBar
+        videos={videos}
+        selectedVideoId={selectedVideo?.id ?? ''}
+        videoSelectRef={videoSelectRef}
+        myAnnotationsButtonRef={myAnnotationsButtonRef}
+        menuButtonRef={menuButtonRef}
+        onVideoSelectClick={() => markOnboardingAction('video_select')}
+        onVideoChange={(videoId) => {
+          markOnboardingAction('video_select');
+          setSelectedVideoId(videoId);
+        }}
+        onOpenAnnotations={() => {
+          markOnboardingAction('my_annotations_button');
+          setIsMyAnnotationsOpen(true);
+        }}
+        onOpenMenu={() => {
+          markOnboardingAction('menu_button');
+          setIsMenuOpen(true);
+        }}
+        annotationsButtonIcon={<IconList />}
+        menuButtonIcon={<IconMenu />}
+      />
 
       <section className='mx-auto w-full max-w-[1800px] px-4 py-3'>
         <article
@@ -2049,7 +1844,7 @@ export default function Home() {
         <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
           <div className='ml-auto h-full w-full max-w-md overflow-y-auto bg-white p-5 shadow-2xl'>
             <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>鎴戠殑鏍囨敞</h2>
+              <h2 className='text-base font-semibold text-zinc-900'>{'\u6211\u7684\u6807\u6ce8'}</h2>
               <button
                 className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
                 onClick={() => {
@@ -2143,7 +1938,7 @@ export default function Home() {
                       <p className='line-clamp-2 text-sm font-medium text-zinc-800'>
                         {item.drivers
                           .map((driver) => DRIVE_LABEL_MAP[driver] ?? driver)
-                          .join('?')}
+                          .join('\u3001')}
                       </p>
                     </div>
                   </article>
@@ -2163,8 +1958,8 @@ export default function Home() {
                 className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
                 onClick={() => setIsMenuOpen(false)}
                 type='button'
-                aria-label='关闭菜单'
-                title='关闭菜单'
+                aria-label={'\u5173\u95ed\u83dc\u5355'}
+                title={'\u5173\u95ed\u83dc\u5355'}
               >
                 <IconClose />
               </button>
@@ -2338,83 +2133,19 @@ export default function Home() {
         ? createPortal(annotationOverlay, annotationPortalHost)
         : annotationOverlay}
 
-      {isOnboardingOpen ? (
-        <div className='pointer-events-none fixed inset-0 z-[120] p-4' role='dialog' aria-modal='true'>
-          {onboardingHighlightRect ? (
-            <div
-              className='pointer-events-none fixed rounded-xl border-2 border-blue-400 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]'
-              style={{
-                top: onboardingHighlightRect.top,
-                left: onboardingHighlightRect.left,
-                width: onboardingHighlightRect.width,
-                height: onboardingHighlightRect.height,
-              }}
-            />
-          ) : (
-            <div className='pointer-events-none fixed inset-0 bg-black/55' />
-          )}
-          <section
-            className='pointer-events-auto fixed z-[130] w-[min(440px,calc(100vw-32px))] rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl'
-            style={
-              onboardingCardPosition
-                ? { top: onboardingCardPosition.top, left: onboardingCardPosition.left }
-                : undefined
-            }
-          >
-            <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>棣栨浣跨敤寮曞</h2>
-              <button
-                type='button'
-                onClick={() => finishOnboarding(true)}
-                className='inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
-                title='鍏抽棴寮曞'
-                aria-label='鍏抽棴寮曞'
-              >
-                <IconClose />
-              </button>
-            </div>
-
-            <p className='mb-2 text-xs text-zinc-500'>
-              第 {onboardingStepIndex + 1} / {ONBOARDING_STEPS.length} 步
-            </p>
-            <p className='mt-2 text-sm leading-6 text-zinc-700'>
-              {currentOnboardingStep.description}
-            </p>
-            {currentOnboardingStep.actionHint ? (
-              <p className='mt-2 rounded-md bg-blue-50 px-2 py-1.5 text-xs text-blue-700'>
-                {currentOnboardingStep.actionHint}
-              </p>
-            ) : null}
-
-            <div className='mt-5 flex items-center justify-between'>
-              <button
-                type='button'
-                onClick={() => finishOnboarding(true)}
-                className='text-sm text-zinc-500 hover:text-zinc-700'
-              >
-                跳过引导
-              </button>
-              <div className='flex items-center gap-2'>
-                <button
-                  type='button'
-                  onClick={goOnboardingPrev}
-                  disabled={onboardingStepIndex === 0}
-                  className='rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 disabled:opacity-40'
-                >
-                  上一步
-                </button>
-                <button
-                  type='button'
-                  onClick={goOnboardingNext}
-                  className='rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700'
-                >
-                  {onboardingStepIndex === ONBOARDING_STEPS.length - 1 ? '完成' : '下一步'}
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
-      ) : null}
+      <OnboardingOverlay
+        isOpen={isOnboardingOpen}
+        highlightRect={onboardingHighlightRect}
+        cardPosition={onboardingCardPosition}
+        currentStep={currentOnboardingStep}
+        stepIndex={onboardingStepIndex}
+        totalSteps={ONBOARDING_STEPS.length}
+        onClose={() => finishOnboarding(true)}
+        onSkip={() => finishOnboarding(true)}
+        onPrev={goOnboardingPrev}
+        onNext={goOnboardingNext}
+        closeIcon={<IconClose />}
+      />
     </main>
   );
 }
