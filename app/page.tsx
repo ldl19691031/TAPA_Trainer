@@ -58,7 +58,8 @@ const SNAP_STEP_SECONDS = 0.5;
 const MERGE_THRESHOLD = 0.5;
 const MAX_COMMENT_LENGTH = 1000;
 const ONBOARDING_STORAGE_KEY = 'tapa_onboarding_seen_version';
-const ONBOARDING_VERSION = 'v3';
+const ONBOARDING_VERSION = 'v4';
+const MIN_PLAY_URL_LOADING_MS = 450;
 const ONBOARDING_DEMO_VIDEO_KEYWORD = '\u6797\u4f9d\u6668';
 const ONBOARDING_DEMO_VIDEO_SEEK_SEC = 255;
 const PLAYBACK_RATE_OPTIONS = [0.2, 0.3, 0.5, 0.75, 1] as const;
@@ -74,6 +75,7 @@ type OnboardingTargetId =
   | 'driver_select'
   | 'save_annotation'
   | 'my_annotations_button'
+  | 'annotation_action'
   | 'annotation_card'
   | 'menu_button';
 
@@ -144,6 +146,16 @@ const ONBOARDING_STEPS: OnboardingStep[] = [
       '\u70b9\u51fb\u9876\u90e8\u53f3\u4e0a\u89d2\u7684\u6807\u6ce8\u5217\u8868\u6309\u94ae\uff0c\u67e5\u770b\u4f60\u521a\u624d\u4fdd\u5b58\u7684\u6807\u6ce8\u5361\u7247\u3002',
     targetId: 'my_annotations_button',
     requireAction: true,
+  },
+  {
+    id: 'open_annotation_action_menu',
+    title: '\u67e5\u770b\u5220\u9664\u5165\u53e3',
+    description:
+      '\u70b9\u51fb\u6807\u6ce8\u5361\u7247\u53f3\u4e0a\u89d2\u7684\u300c\u6807\u6ce8\u4fee\u8ba2\u300d\u6309\u94ae\uff0c\u5373\u53ef\u770b\u5230\u7f16\u8f91\u548c\u5220\u9664\u5165\u53e3\u3002\u4f60\u4e0d\u9700\u8981\u771f\u6b63\u6267\u884c\u5220\u9664\u3002',
+    targetId: 'annotation_action',
+    requireAction: true,
+    actionHint:
+      '\u8bf7\u70b9\u5f00\u4efb\u610f\u4e00\u5f20\u6807\u6ce8\u5361\u7247\u53f3\u4e0a\u89d2\u7684\u300c\u6807\u6ce8\u4fee\u8ba2\u300d\u3002',
   },
   {
     id: 'jump_by_annotation_card',
@@ -546,6 +558,7 @@ export default function Home() {
   const myAnnotationsButtonRef = useRef<HTMLButtonElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const firstAnnotationCardRef = useRef<HTMLElement | null>(null);
+  const firstAnnotationActionButtonRef = useRef<HTMLButtonElement | null>(null);
   const onboardingPreparedStepIdsRef = useRef<Set<string>>(new Set());
   const onboardingRuntimeRef = useRef<{
     isOpen: boolean;
@@ -561,6 +574,7 @@ export default function Home() {
   const playUrlRecoveryAttemptRef = useRef(0);
   const currentVideoTimeRef = useRef(0);
   const pendingPlaybackResumeSecRef = useRef<number | null>(null);
+  const playUrlLoadingStartedAtRef = useRef(0);
   const [videoOverlayLayout, setVideoOverlayLayout] = useState<VideoOverlayLayout | null>(null);
 
   const markOnboardingAction = useCallback((targetId: OnboardingTargetId) => {
@@ -693,6 +707,7 @@ export default function Home() {
       pendingPlaybackResumeSecRef.current = resumeTimeSec;
       setPendingPlaybackResumeSec(resumeTimeSec);
     }
+    playUrlLoadingStartedAtRef.current = performance.now();
     setLoadingPlayUrl(true);
     setPlayUrlError('');
     const response = await fetch(`/api/videos/${selectedVideoId}/play-url`, {
@@ -700,6 +715,11 @@ export default function Home() {
       cache: 'no-store',
     });
     const payload = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+    const elapsedMs = performance.now() - playUrlLoadingStartedAtRef.current;
+    const remainingMs = Math.max(0, MIN_PLAY_URL_LOADING_MS - elapsedMs);
+    if (remainingMs > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, remainingMs));
+    }
     setLoadingPlayUrl(false);
     if (!response.ok || !payload.url) {
       setPlayUrl('');
@@ -1445,6 +1465,9 @@ export default function Home() {
       if (targetId === 'my_annotations_button') {
         return myAnnotationsButtonRef.current;
       }
+      if (targetId === 'annotation_action') {
+        return firstAnnotationActionButtonRef.current;
+      }
       if (targetId === 'annotation_card') {
         return firstAnnotationCardRef.current;
       }
@@ -1484,7 +1507,7 @@ export default function Home() {
       return;
     }
 
-    if (stepId === 'jump_by_annotation_card') {
+    if (stepId === 'open_annotation_action_menu' || stepId === 'jump_by_annotation_card') {
       setIsAnnotationOpen(false);
       setIsPersonPicking(false);
       setIsMyAnnotationsOpen(true);
@@ -1631,9 +1654,6 @@ export default function Home() {
   }, []);
 
   const goOnboardingNext = () => {
-    if (!isCurrentStepActionDone) {
-      return;
-    }
     if (onboardingStepIndex >= ONBOARDING_STEPS.length - 1) {
       finishOnboarding(true);
       return;
@@ -2063,6 +2083,7 @@ export default function Home() {
                     title={`??? ${formatSeconds(item.start_sec)}`}
                   >
                     <button
+                      ref={index === 0 ? firstAnnotationActionButtonRef : null}
                       type='button'
                       className='absolute right-2 top-2 z-10 inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-white/90 px-2 text-zinc-700 shadow-sm hover:bg-white'
                       aria-label='??????'
@@ -2075,6 +2096,7 @@ export default function Home() {
                       }
                       onClick={(event) => {
                         event.stopPropagation();
+                        markOnboardingAction('annotation_action');
                         setOpenAnnotationActionId((current) => (current === item.id ? null : item.id));
                       }}
                     >
