@@ -941,9 +941,7 @@ export default function Home() {
       if (videoRef.current === mediaElement) {
         videoRef.current = null;
       }
-      if (mount.contains(mediaElement)) {
-        mount.removeChild(mediaElement);
-      }
+      mount.replaceChildren();
       setIsPlayerFullscreen(false);
       setAnnotationPortalHost(null);
     };
