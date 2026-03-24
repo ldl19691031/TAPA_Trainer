@@ -1668,7 +1668,7 @@ export default function Home() {
             <button
               type='button'
               className='pointer-events-auto fixed inset-0'
-              aria-label='閫€鍑洪€変汉妯″紡'
+              aria-label='退出选人模式'
               onClick={() => setIsPersonPicking(false)}
             />
           ) : null}
@@ -1700,7 +1700,7 @@ export default function Home() {
                   selectPersonCandidate(candidate);
                   setIsPersonPicking(false);
                 }}
-                aria-label={'鍦ㄨ棰戜腑閫夋嫨杞ㄨ抗 ' + candidate.trackId}
+                aria-label={'在视频中选择轨迹 ' + candidate.trackId}
                 title={'杞ㄨ抗 ' + candidate.trackId}
               >
                 <span
@@ -1738,13 +1738,13 @@ export default function Home() {
           aria-modal='true'
         >
           <div className='mb-3 flex items-center justify-between'>
-            <h2 className='text-base font-semibold text-zinc-900'>鏍囨敞</h2>
+            <h2 className='text-base font-semibold text-zinc-900'>标注</h2>
             <button
               className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
               onClick={() => setIsAnnotationOpen(false)}
               type='button'
-              aria-label='鍏抽棴'
-              title='鍏抽棴'
+              aria-label='关闭'
+              title='关闭'
             >
               <IconClose />
             </button>
@@ -1800,7 +1800,7 @@ export default function Home() {
 
             {!quickMode ? (
               <label className='text-sm text-zinc-700'>
-                璇勮
+                评论
                 <textarea
                   className='mt-1 h-24 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
                   maxLength={MAX_COMMENT_LENGTH}
@@ -1817,8 +1817,8 @@ export default function Home() {
                 className={`inline-flex h-10 w-10 items-center justify-center rounded-md border text-zinc-700 ${
                   isPersonPicking ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-zinc-300 hover:bg-zinc-50'
                 }`}
-                title='閫夋嫨鏍囨敞瀵硅薄'
-                aria-label='閫夋嫨鏍囨敞瀵硅薄'
+                title='选择标注对象'
+                aria-label='选择标注对象'
                 onClick={() => void startPersonPicking()}
               >
                 <IconUserTag />
@@ -1909,7 +1909,7 @@ export default function Home() {
       <header className='sticky top-0 z-30 border-b border-zinc-200 bg-white/95 backdrop-blur'>
         <div className='mx-auto flex h-14 w-full max-w-[1800px] items-center justify-between px-4'>
           <div className='flex min-w-0 items-center gap-3'>
-            <h1 className='whitespace-nowrap text-sm font-semibold tracking-wide text-zinc-900'>椹卞姏璁粌</h1>
+            <h1 className='whitespace-nowrap text-sm font-semibold tracking-wide text-zinc-900'>驱力训练</h1>
             <select
               ref={videoSelectRef}
               className='w-[240px] max-w-[52vw] truncate rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-700'
@@ -1919,9 +1919,9 @@ export default function Home() {
                 markOnboardingAction('video_select');
                 setSelectedVideoId(event.target.value);
               }}
-              title='鍒囨崲瑙嗛'
+              title='切换视频'
             >
-              {videos.length === 0 ? <option value=''>鏆傛棤瑙嗛</option> : null}
+              {videos.length === 0 ? <option value=''>暂无视频</option> : null}
               {videos.map((video) => (
                 <option key={video.id} value={video.id}>
                   {video.title}
@@ -1951,8 +1951,8 @@ export default function Home() {
                 markOnboardingAction('menu_button');
                 setIsMenuOpen(true);
               }}
-              title='鎵撳紑鑿滃崟'
-              aria-label='鎵撳紑鑿滃崟'
+              title='打开菜单'
+              aria-label='打开菜单'
             >
               <IconMenu />
             </button>
@@ -2127,8 +2127,8 @@ export default function Home() {
                 className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
                 onClick={() => setIsMenuOpen(false)}
                 type='button'
-                aria-label='鍏抽棴鑿滃崟'
-                title='鍏抽棴鑿滃崟'
+                aria-label='关闭菜单'
+                title='关闭菜单'
               >
                 <IconClose />
               </button>
@@ -2158,7 +2158,7 @@ export default function Home() {
                   checked={quickMode}
                   onChange={(event) => setQuickMode(event.target.checked)}
                 />
-                蹇€熸ā寮?
+                快速模式
               </label>
             </section>
 
@@ -2172,7 +2172,7 @@ export default function Home() {
                 }}
               >
                 <IconRefresh />
-                鍒锋柊鎾斁閾炬帴
+                刷新播放链接
               </button>
               <button
                 className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
@@ -2183,7 +2183,7 @@ export default function Home() {
                 }}
               >
                 <IconFolder />
-                瑙嗛搴撲笌鎻愪氦
+                视频库与提交
               </button>
               <button
                 className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
@@ -2327,13 +2327,13 @@ export default function Home() {
             }
           >
             <div className='mb-4 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>棣栨浣跨敤寮曞</h2>
+              <h2 className='text-base font-semibold text-zinc-900'>首次使用引导</h2>
               <button
                 type='button'
                 onClick={() => finishOnboarding(true)}
                 className='inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
-                title='鍏抽棴寮曞'
-                aria-label='鍏抽棴寮曞'
+                title='关闭引导'
+                aria-label='关闭引导'
               >
                 <IconClose />
               </button>
@@ -2357,7 +2357,7 @@ export default function Home() {
                 onClick={() => finishOnboarding(true)}
                 className='text-sm text-zinc-500 hover:text-zinc-700'
               >
-                璺宠繃寮曞
+                跳过引导
               </button>
               <div className='flex items-center gap-2'>
                 <button
