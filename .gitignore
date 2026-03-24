@@ -46,5 +46,19 @@ __pycache__/
 .venv-vision/
 .conda-vision/
 yolov8n-seg.pt
+
+# local heavy assets (avoid accidental commit)
+tmp/
+videos/
+models/
+checkpoints/
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.mp4
+*.mkv
+*.mov
  
 .vercel

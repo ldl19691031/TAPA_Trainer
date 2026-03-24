@@ -6,4 +6,14 @@ node_modules
 yolov8n-seg.pt
 tmp
 videos
+models
+checkpoints
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.mp4
+*.mkv
+*.mov
 *.log
