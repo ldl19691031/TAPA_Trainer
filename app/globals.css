@@ -74,6 +74,13 @@ body {
   line-height: 1;
 }
 
+.tapa-plyr-extra-btn-icon {
+  min-width: 32px;
+  width: 32px;
+  padding: 0;
+  font-size: 14px;
+}
+
 .tapa-plyr-extra-btn-primary {
   border-color: rgba(59, 130, 246, 0.85);
   background: rgba(37, 99, 235, 0.9);

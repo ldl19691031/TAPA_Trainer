@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import type Plyr from 'plyr';
 import { getSupabaseBrowserClient } from '../lib/supabase-browser';
@@ -70,24 +71,24 @@ type OnboardingStep = {
 
 const ONBOARDING_STEPS: OnboardingStep[] = [
   {
-    title: '切换视频',
+    title: 'Switch Video',
     description:
-      '在页面左上角的下拉框切换当前训练视频。切换后会自动刷新对应的标注数据。',
+      'Use the top-left dropdown to switch the current training video. Related annotations will refresh automatically.',
     targetId: 'video_select',
     requireAction: true,
-    actionHint: '请先点击一次左上角视频下拉框，再进入下一步。',
+    actionHint: 'Click the top-left video dropdown once, then continue.',
   },
   {
-    title: '添加标注',
+    title: 'Add Annotation',
     description:
-      '播放器下方工具栏点击“标注”按钮即可打开标注面板，默认会自动填入当前时间前后约 2 秒。',
+      'Use the annotation button in the player controls to open the panel. The time segment defaults to around current time +/- 2 seconds.',
     targetId: 'annotation_button',
     requireAction: false,
   },
   {
-    title: '慢放与速度',
+    title: 'Speed Control',
     description:
-      '播放器下方工具栏的速度按钮可调节播放速度，支持 0.2x、0.3x、0.5x、0.75x 和 1x。',
+      'Use the speed button in the player controls to cycle 0.2x, 0.3x, 0.5x, 0.75x and 1x.',
     targetId: 'speed_button',
     requireAction: false,
   },
@@ -176,6 +177,36 @@ function IconHelp() {
   );
 }
 
+function IconMenu() {
+  return (
+    <svg viewBox='0 0 24 24' aria-hidden='true' className='h-5 w-5'>
+      <path
+        d='M4 7h16M4 12h16M4 17h16'
+        fill='none'
+        stroke='currentColor'
+        strokeWidth='2'
+        strokeLinecap='round'
+        strokeLinejoin='round'
+      />
+    </svg>
+  );
+}
+
+function IconUserTag() {
+  return (
+    <svg viewBox='0 0 24 24' aria-hidden='true' className='h-4 w-4'>
+      <path
+        d='M10 14a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm-7 7a7 7 0 0 1 14 0M21 10l-2 2m2-2-2-2m2 2h-6'
+        fill='none'
+        stroke='currentColor'
+        strokeWidth='2'
+        strokeLinecap='round'
+        strokeLinejoin='round'
+      />
+    </svg>
+  );
+}
+
 const CUE_ROWS: Array<{ key: keyof DriveCue; icon: string }> = [
   { key: 'lexicon', icon: '\u{1F4AC}' }, // speech balloon
   { key: 'tone', icon: '\u{1F3B5}' }, // musical note
@@ -252,7 +283,7 @@ async function loadVideos(supabase: SupabaseClient): Promise<{ rows: VideoRow[];
     .select('id,title,storage_key,source_url,created_by,created_at')
     .order('created_at', { ascending: false });
   if (error) {
-    return { rows: [], error: '无法读取 videos 表，请先执行 SQL migration。' };
+    return { rows: [], error: 'Cannot read videos table. Please run SQL migration first.' };
   }
   return { rows: (data ?? []) as VideoRow[], error: null };
 }
@@ -276,7 +307,7 @@ async function loadAnnotations(
     !primary.error.message.includes('person_box') &&
     !primary.error.message.includes('person_ts_sec')
   ) {
-    return { rows: [], error: `读取 annotations 表失败：${primary.error.message}` };
+    return { rows: [], error: 'Read annotations failed: ' + primary.error.message };
   }
 
   const fallback = await supabase
@@ -285,7 +316,7 @@ async function loadAnnotations(
     .eq('video_id', videoId)
     .order('start_sec', { ascending: true });
   if (fallback.error) {
-    return { rows: [], error: `读取 annotations 表失败：${fallback.error.message}` };
+    return { rows: [], error: 'Read annotations failed: ' + fallback.error.message };
   }
   const rows = (fallback.data ?? []).map((row) => ({
     ...(row as Omit<AnnotationRow, 'person_track_id' | 'person_ts_sec' | 'person_box'>),
@@ -312,7 +343,7 @@ async function loadPersonFrameRows(
     .order('ts_sec', { ascending: true })
     .order('score', { ascending: false });
   if (error) {
-    return { rows: [], error: `读取人体候选失败：${error.message}` };
+    return { rows: [], error: 'Read person candidates failed: ' + error.message };
   }
   return { rows: (data ?? []) as PersonFrameRow[], error: null };
 }
@@ -356,8 +387,11 @@ export default function Home() {
   const [isLoadingPersonCandidates, setIsLoadingPersonCandidates] = useState(false);
 
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
-  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [isPersonPicking, setIsPersonPicking] = useState(false);
+  const [isPlayerFullscreen, setIsPlayerFullscreen] = useState(false);
+  const [annotationPortalHost, setAnnotationPortalHost] = useState<HTMLElement | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
@@ -392,6 +426,7 @@ export default function Home() {
     setSelectedPersonTrackId(null);
     setSelectedPersonBox(null);
     setSelectedPersonTsSec(null);
+    setIsPersonPicking(false);
   }, [selectedVideoId]);
 
   useEffect(() => {
@@ -530,7 +565,7 @@ export default function Home() {
       options: { emailRedirectTo: redirectTo },
     });
     if (error) {
-      setAuthMessage(`发送失败：${error.message}`);
+      setAuthMessage('发送失败：' + error.message);
       setAuthSending(false);
       return;
     }
@@ -631,8 +666,17 @@ export default function Home() {
         settings: [],
         keyboard: { focused: true, global: false },
         clickToPlay: true,
+        fullscreen: { enabled: true, fallback: true, iosNative: false },
       });
       localPlayer.speed = videoRef.current.playbackRate;
+      localPlayer.on('enterfullscreen', () => {
+        setIsPlayerFullscreen(true);
+        setAnnotationPortalHost((localPlayer?.elements?.container as HTMLElement | undefined) ?? null);
+      });
+      localPlayer.on('exitfullscreen', () => {
+        setIsPlayerFullscreen(false);
+        setAnnotationPortalHost(null);
+      });
       playerRef.current = localPlayer;
     });
 
@@ -644,6 +688,8 @@ export default function Home() {
       if (playerRef.current === localPlayer) {
         playerRef.current = null;
       }
+      setIsPlayerFullscreen(false);
+      setAnnotationPortalHost(null);
     };
   }, [playUrl]);
 
@@ -713,6 +759,14 @@ export default function Home() {
     setSelectedPersonTsSec(candidate.tsSec);
   }, []);
 
+  const startPersonPicking = useCallback(async () => {
+    const current = videoRef.current?.currentTime ?? currentVideoTime;
+    if (personCandidates.length === 0) {
+      await loadPersonCandidatesForTime(current);
+    }
+    setIsPersonPicking(true);
+  }, [currentVideoTime, loadPersonCandidatesForTime, personCandidates.length]);
+
   const openAnnotationPanel = useCallback(() => {
     const current = videoRef.current?.currentTime ?? 0;
     const normalized = normalizeSegment(
@@ -723,6 +777,7 @@ export default function Home() {
     );
     setSegmentStart(normalized.start);
     setSegmentEnd(normalized.end);
+    setIsPersonPicking(false);
     setIsAnnotationOpen(true);
     void loadPersonCandidatesForTime(current);
   }, [loadPersonCandidatesForTime]);
@@ -771,16 +826,18 @@ export default function Home() {
       forwardButton.onclick = () => seekBySeconds(3);
 
       const speedButton = getOrCreateButton('speed');
-      speedButton.textContent = `速度 ${playbackRate}x`;
-      speedButton.title = '切换播放速度';
-      speedButton.setAttribute('aria-label', '切换播放速度');
+      speedButton.textContent = '\u23F1';
+      speedButton.title = '播放速度 ' + playbackRate + 'x（点击切换）';
+      speedButton.setAttribute('aria-label', '播放速度 ' + playbackRate + 'x');
       speedButton.onclick = () => cycleSpeed();
+      speedButton.classList.add('tapa-plyr-extra-btn-icon');
 
       const annotationButton = getOrCreateButton('annotation');
-      annotationButton.textContent = '标注';
+      annotationButton.textContent = '\u{1F3F7}';
       annotationButton.title = '打开标注面板';
       annotationButton.setAttribute('aria-label', '打开标注面板');
       annotationButton.onclick = () => openAnnotationPanel();
+      annotationButton.classList.add('tapa-plyr-extra-btn-icon');
       annotationButton.classList.add('tapa-plyr-extra-btn-primary');
       speedButtonRef.current = speedButton;
       annotationButtonRef.current = annotationButton;
@@ -816,7 +873,7 @@ export default function Home() {
       .select('id,title,storage_key,source_url,created_by,created_at')
       .single();
     if (error) {
-      setQueryError(`创建视频失败：${error.message}`);
+      setQueryError('创建视频失败：' + error.message);
       return;
     }
     const row = data as VideoRow;
@@ -890,7 +947,7 @@ export default function Home() {
     }
     setSaving(false);
     if (error) {
-      setQueryError(`保存标注失败：${error.message}`);
+      setQueryError('保存标注失败：' + error.message);
       return;
     }
     setSegmentStart(normalized.start);
@@ -1061,6 +1118,210 @@ export default function Home() {
     setOnboardingStepIndex((value) => Math.max(0, value - 1));
   };
 
+  const annotationOverlay = isAnnotationOpen ? (
+    <div
+      className={`fixed inset-0 z-40 flex bg-black/30 ${
+        isPlayerFullscreen ? 'items-stretch justify-end p-0' : 'items-end justify-end p-4 md:items-center'
+      }`}
+    >
+      {videoOverlayLayout ? (
+        <div className='pointer-events-none fixed inset-0 z-[45]'>
+          {isPersonPicking ? (
+            <button
+              type='button'
+              className='pointer-events-auto fixed inset-0'
+              aria-label='退出选人模式'
+              onClick={() => setIsPersonPicking(false)}
+            />
+          ) : null}
+          {(isPersonPicking
+            ? personCandidates
+            : personCandidates.filter((candidate) => candidate.trackId === selectedPersonTrackId)
+          ).map((candidate) => {
+            const selected = candidate.trackId === selectedPersonTrackId;
+            return (
+              <button
+                key={`video-candidate-${candidate.trackId}`}
+                type='button'
+                className={`pointer-events-auto fixed rounded border-2 ${
+                  selected
+                    ? 'border-blue-500 bg-blue-500/15'
+                    : 'border-emerald-400 bg-emerald-500/12'
+                }`}
+                style={{
+                  left:
+                    videoOverlayLayout.viewportLeft +
+                    candidate.box.left * videoOverlayLayout.width,
+                  top:
+                    videoOverlayLayout.viewportTop +
+                    candidate.box.top * videoOverlayLayout.height,
+                  width: candidate.box.width * videoOverlayLayout.width,
+                  height: candidate.box.height * videoOverlayLayout.height,
+                }}
+                onClick={() => {
+                  selectPersonCandidate(candidate);
+                  setIsPersonPicking(false);
+                }}
+                aria-label={'在视频中选择轨迹 ' + candidate.trackId}
+                title={'轨迹 ' + candidate.trackId}
+              >
+                <span
+                  className={`absolute left-1 top-1 rounded px-1 text-[10px] font-semibold ${
+                    selected ? 'bg-blue-600 text-white' : 'bg-black/70 text-white'
+                  }`}
+                >
+                  {selected ? '已选 #' + candidate.trackId : '#' + candidate.trackId}
+                </span>
+              </button>
+            );
+          })}
+          {!isPersonPicking && selectedPersonBox ? (
+            <div
+              className='pointer-events-none fixed rounded border-2 border-blue-500 bg-blue-500/12'
+              style={{
+                left: videoOverlayLayout.viewportLeft + selectedPersonBox.left * videoOverlayLayout.width,
+                top: videoOverlayLayout.viewportTop + selectedPersonBox.top * videoOverlayLayout.height,
+                width: selectedPersonBox.width * videoOverlayLayout.width,
+                height: selectedPersonBox.height * videoOverlayLayout.height,
+              }}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
+      {!isPersonPicking ? (
+        <section
+          className={`relative z-50 w-full border border-zinc-200 bg-white p-5 shadow-2xl ${
+            isPlayerFullscreen
+              ? 'h-full max-w-md overflow-y-auto rounded-none'
+              : 'h-full max-w-xl overflow-y-auto rounded-2xl md:h-auto md:max-h-[90vh] md:overflow-visible'
+          }`}
+          role='dialog'
+          aria-modal='true'
+        >
+          <div className='mb-3 flex items-center justify-between'>
+            <h2 className='text-base font-semibold text-zinc-900'>标注</h2>
+            <button
+              className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
+              onClick={() => setIsAnnotationOpen(false)}
+              type='button'
+              aria-label='关闭'
+              title='关闭'
+            >
+              <IconClose />
+            </button>
+          </div>
+
+          <form className='space-y-3' onSubmit={handleSubmitAnnotation}>
+            <div className='flex flex-wrap gap-2'>
+              {DRIVE_OPTIONS.map((driver) => {
+                const active = selectedDrivers.includes(driver.id);
+                return (
+                  <button
+                    key={driver.id}
+                    type='button'
+                    onClick={() => toggleDriver(driver.id)}
+                    className={`group relative rounded-full border px-3 py-1.5 text-sm transition ${
+                      active
+                        ? 'border-blue-600 bg-blue-50 text-blue-700'
+                        : 'border-zinc-300 text-zinc-800 hover:bg-zinc-50'
+                    }`}
+                  >
+                    <span className='font-medium'>{driver.label}</span>
+                    <span className='pointer-events-none absolute left-0 top-full z-[90] mt-2 hidden w-[360px] max-w-[78vw] rounded-xl border border-zinc-200 bg-white p-2.5 text-xs text-zinc-700 shadow-md group-hover:block'>
+                      <span className='grid gap-2'>
+                        {CUE_ROWS.map((row) => (
+                          <span
+                            key={row.key}
+                            className='flex items-start gap-2 rounded-lg bg-zinc-50 px-2 py-1.5'
+                          >
+                            <span className='mt-0.5 inline-flex h-5 w-5 flex-none items-center justify-center rounded-full bg-white text-[11px] font-semibold text-zinc-700 shadow-sm'>
+                              {row.icon}
+                            </span>
+                            <span className='leading-5 text-zinc-700'>{driver.cues[row.key]}</span>
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <section className='rounded-lg border border-zinc-200 bg-zinc-50 p-2.5'>
+              <div className='mb-2 flex items-center justify-between'>
+                <p className='text-xs font-medium text-zinc-700'>人体定位（离线预处理）</p>
+                <button
+                  type='button'
+                  className='rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 disabled:opacity-50'
+                  disabled={isLoadingPersonCandidates}
+                  onClick={() => void loadPersonCandidatesForTime(videoRef.current?.currentTime ?? currentVideoTime)}
+                >
+                  {isLoadingPersonCandidates ? '读取中...' : '刷新候选'}
+                </button>
+              </div>
+              <p className='text-xs text-zinc-500'>
+                可直接点击视频画面中的人体框选择对象；若当前时刻没有候选，仍可只记录驱力与时间片段。
+              </p>
+            </section>
+
+            {!quickMode ? (
+              <label className='text-sm text-zinc-700'>
+                评论
+                <textarea
+                  className='mt-1 h-24 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
+                  maxLength={MAX_COMMENT_LENGTH}
+                  value={comment}
+                  onChange={(event) => setComment(event.target.value)}
+                />
+              </label>
+            ) : null}
+
+            <div className='flex items-center gap-2'>
+              <button
+                type='button'
+                className={`inline-flex h-10 w-10 items-center justify-center rounded-md border text-zinc-700 ${
+                  isPersonPicking ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-zinc-300 hover:bg-zinc-50'
+                }`}
+                title='选择标注对象'
+                aria-label='选择标注对象'
+                onClick={() => void startPersonPicking()}
+              >
+                <IconUserTag />
+              </button>
+              <button
+                className='w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60'
+                type='submit'
+                disabled={saving || selectedDrivers.length === 0 || !selectedVideoId}
+              >
+                {saving ? '保存中...' : '保存标注'}
+              </button>
+            </div>
+            {loadingAnnotations ? (
+              <p className='text-xs text-zinc-500'>加载标注中...</p>
+            ) : (
+              <p className='text-xs text-zinc-500'>
+                当前时间片段：{formatSeconds(segmentStart)} - {formatSeconds(segmentEnd)}
+              </p>
+            )}
+            {mode === 'supervision' && clusters.length > 0 ? (
+              <p className='text-xs text-zinc-500'>督导模式：当前视频共 {clusters.length} 个合并片段。</p>
+            ) : null}
+            {mode === 'practice' && visibleAnnotations.length > 0 ? (
+              <p className='text-xs text-zinc-500'>练习模式：你已标注 {visibleAnnotations.length} 条。</p>
+            ) : null}
+          </form>
+
+          {queryError ? (
+            <p className='mt-3 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
+              {queryError}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+    </div>
+  ) : null;
+
   if (authLoading) {
     return <main className='mx-auto flex min-h-screen items-center justify-center'>加载中...</main>;
   }
@@ -1070,7 +1331,7 @@ export default function Home() {
       <main className='mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-4 py-10'>
         <section className='w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-sm'>
           <h1 className='text-xl font-semibold text-zinc-900'>驱力行为训练</h1>
-          <p className='mt-2 text-sm text-zinc-600'>使用魔法链接登录，已登录会保持会话。</p>
+          <p className='mt-2 text-sm text-zinc-600'>使用魔法链接登录，登录后会保持会话。</p>
           {!envReady ? (
             <p className='mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
               缺少 NEXT_PUBLIC_SUPABASE_URL 或 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。
@@ -1090,7 +1351,7 @@ export default function Home() {
               type='submit'
               disabled={authSending || magicCooldown > 0}
             >
-              {authSending ? '发送中...' : magicCooldown > 0 ? `${magicCooldown}s 后重试` : '发送魔法链接'}
+              {authSending ? '发送中...' : magicCooldown > 0 ? magicCooldown + 's 后重试' : '发送魔法链接'}
             </button>
           </form>
           {authMessage ? <p className='mt-3 text-sm text-zinc-700'>{authMessage}</p> : null}
@@ -1126,39 +1387,13 @@ export default function Home() {
           </div>
           <div className='flex items-center gap-2'>
             <button
-              className='inline-flex items-center justify-center rounded-md px-2 py-2 text-zinc-700 hover:bg-zinc-100'
+              className='inline-flex items-center justify-center rounded-md border border-zinc-300 px-2 py-2 text-zinc-700 hover:bg-zinc-50'
               type='button'
-              onClick={() => void refreshPlayUrl()}
-              title='刷新播放链接'
-              aria-label='刷新播放链接'
+              onClick={() => setIsMenuOpen(true)}
+              title='打开菜单'
+              aria-label='打开菜单'
             >
-              <IconRefresh />
-            </button>
-            <button
-              className='inline-flex items-center justify-center rounded-md px-2 py-2 text-zinc-700 hover:bg-zinc-100'
-              type='button'
-              onClick={() => setIsLibraryOpen(true)}
-              title='视频库'
-              aria-label='视频库'
-            >
-              <IconFolder />
-            </button>
-            <button
-              className='inline-flex items-center justify-center rounded-md px-2 py-2 text-zinc-700 hover:bg-zinc-100'
-              type='button'
-              onClick={openOnboarding}
-              title='使用引导'
-              aria-label='使用引导'
-            >
-              <IconHelp />
-            </button>
-            <button
-              className='inline-flex items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50'
-              type='button'
-              onClick={handleSignOut}
-            >
-              <IconSignOut />
-              <span className='hidden sm:inline'>退出</span>
+              <IconMenu />
             </button>
           </div>
         </div>
@@ -1191,7 +1426,8 @@ export default function Home() {
             )}
           </div>
 
-          {activePersonAnnotations.map((item) => {
+          {!isAnnotationOpen
+            ? activePersonAnnotations.map((item) => {
             const box = item.person_box;
             if (!box || !videoOverlayLayout) {
               return null;
@@ -1215,10 +1451,102 @@ export default function Home() {
                 </span>
               </div>
             );
-          })}
+              })
+            : null}
         </article>
 
       </section>
+
+            {isMenuOpen ? (
+        <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
+          <div className='ml-auto h-full w-full max-w-sm overflow-y-auto bg-white p-5 shadow-2xl'>
+            <div className='mb-4 flex items-center justify-between'>
+              <h2 className='text-base font-semibold text-zinc-900'>菜单</h2>
+              <button
+                className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
+                onClick={() => setIsMenuOpen(false)}
+                type='button'
+                aria-label='关闭菜单'
+                title='关闭菜单'
+              >
+                <IconClose />
+              </button>
+            </div>
+
+            <section className='mb-4 rounded-lg border border-zinc-200 p-3'>
+              <p className='mb-2 text-xs font-medium text-zinc-600'>模式</p>
+              <div className='inline-flex rounded-md border border-zinc-300 p-1'>
+                <button
+                  type='button'
+                  onClick={() => setMode('practice')}
+                  className={'rounded px-2 py-1 text-xs ' + (mode === 'practice' ? 'bg-zinc-900 text-white' : 'text-zinc-700')}
+                >
+                  练习
+                </button>
+                <button
+                  type='button'
+                  onClick={() => setMode('supervision')}
+                  className={'rounded px-2 py-1 text-xs ' + (mode === 'supervision' ? 'bg-zinc-900 text-white' : 'text-zinc-700')}
+                >
+                  督导
+                </button>
+              </div>
+              <label className='mt-3 flex items-center gap-2 text-sm text-zinc-700'>
+                <input
+                  type='checkbox'
+                  checked={quickMode}
+                  onChange={(event) => setQuickMode(event.target.checked)}
+                />
+                快速模式
+              </label>
+            </section>
+
+            <div className='grid gap-2'>
+              <button
+                className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
+                type='button'
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  void refreshPlayUrl();
+                }}
+              >
+                <IconRefresh />
+                刷新播放链接
+              </button>
+              <button
+                className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
+                type='button'
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  setIsLibraryOpen(true);
+                }}
+              >
+                <IconFolder />
+                视频库与提交
+              </button>
+              <button
+                className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
+                type='button'
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  openOnboarding();
+                }}
+              >
+                <IconHelp />
+                帮助
+              </button>
+              <button
+                className='inline-flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50'
+                type='button'
+                onClick={handleSignOut}
+              >
+                <IconSignOut />
+                登出
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {isLibraryOpen ? (
         <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
@@ -1233,7 +1561,6 @@ export default function Home() {
                 关闭
               </button>
             </div>
-
             <label className='text-sm text-zinc-700'>
               选择视频
               <select
@@ -1276,246 +1603,18 @@ export default function Home() {
                 value={videoSourceUrl}
                 onChange={(event) => setVideoSourceUrl(event.target.value)}
               />
-              <button className='rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white' type='submit'>
+              <button
+                className='rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white'
+                type='submit'
+              >
                 保存视频信息
               </button>
             </form>
-          </div>
+        </div>
         </div>
       ) : null}
 
-      {isAnnotationOpen ? (
-        <div className='fixed inset-0 z-40 flex items-end justify-end bg-black/30 p-4 md:items-center'>
-          {videoOverlayLayout ? (
-            <div className='pointer-events-none fixed inset-0 z-[45]'>
-              {personCandidates.map((candidate) => {
-                const selected = candidate.trackId === selectedPersonTrackId;
-                return (
-                  <button
-                    key={`video-candidate-${candidate.trackId}`}
-                    type='button'
-                    className={`pointer-events-auto fixed rounded border-2 ${
-                      selected
-                        ? 'border-blue-500 bg-blue-500/15'
-                        : 'border-emerald-400 bg-emerald-500/12'
-                    }`}
-                    style={{
-                      left:
-                        videoOverlayLayout.viewportLeft +
-                        candidate.box.left * videoOverlayLayout.width,
-                      top:
-                        videoOverlayLayout.viewportTop +
-                        candidate.box.top * videoOverlayLayout.height,
-                      width: candidate.box.width * videoOverlayLayout.width,
-                      height: candidate.box.height * videoOverlayLayout.height,
-                    }}
-                    onClick={() => selectPersonCandidate(candidate)}
-                    aria-label={`在视频中选择轨迹 ${candidate.trackId}`}
-                    title={`轨迹 ${candidate.trackId}`}
-                  >
-                    <span
-                      className={`absolute left-1 top-1 rounded px-1 text-[10px] font-semibold ${
-                        selected ? 'bg-blue-600 text-white' : 'bg-black/70 text-white'
-                      }`}
-                    >
-                      {selected ? `已选 #${candidate.trackId}` : `#${candidate.trackId}`}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-
-          <section
-            className='relative z-50 h-full w-full max-w-xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl md:h-auto md:max-h-[90vh] md:overflow-visible'
-            role='dialog'
-            aria-modal='true'
-          >
-            <div className='mb-3 flex items-center justify-between'>
-              <h2 className='text-base font-semibold text-zinc-900'>标注</h2>
-              <button
-                className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
-                onClick={() => setIsAnnotationOpen(false)}
-                type='button'
-                aria-label='关闭'
-                title='关闭'
-              >
-                <IconClose />
-              </button>
-            </div>
-
-            <div className='mb-3 inline-flex rounded-md border border-zinc-300 p-1'>
-              <button
-                type='button'
-                onClick={() => setMode('practice')}
-                className={`rounded px-2 py-1 text-xs ${mode === 'practice' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}
-              >
-                练习
-              </button>
-              <button
-                type='button'
-                onClick={() => setMode('supervision')}
-                className={`rounded px-2 py-1 text-xs ${mode === 'supervision' ? 'bg-zinc-900 text-white' : 'text-zinc-700'}`}
-              >
-                督导
-              </button>
-            </div>
-
-            <form className='space-y-3' onSubmit={handleSubmitAnnotation}>
-              <div className='flex flex-wrap gap-2'>
-                {DRIVE_OPTIONS.map((driver) => {
-                  const active = selectedDrivers.includes(driver.id);
-                  return (
-                    <button
-                      key={driver.id}
-                      type='button'
-                      onClick={() => toggleDriver(driver.id)}
-                      className={`group relative rounded-full border px-3 py-1.5 text-sm transition ${
-                        active ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-zinc-300 text-zinc-800 hover:bg-zinc-50'
-                      }`}
-                    >
-                      <span className='font-medium'>{driver.label}</span>
-                      <span className='pointer-events-none absolute left-0 top-full z-[90] mt-2 hidden w-[360px] max-w-[78vw] rounded-xl border border-zinc-200 bg-white p-2.5 text-xs text-zinc-700 shadow-md group-hover:block'>
-                        <span className='grid gap-2'>
-                          {CUE_ROWS.map((row) => (
-                            <span key={row.key} className='flex items-start gap-2 rounded-lg bg-zinc-50 px-2 py-1.5'>
-                              <span className='mt-0.5 inline-flex h-5 w-5 flex-none items-center justify-center rounded-full bg-white text-[11px] font-semibold text-zinc-700 shadow-sm'>
-                                {row.icon}
-                              </span>
-                              <span className='leading-5 text-zinc-700'>{driver.cues[row.key]}</span>
-                            </span>
-                          ))}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <section className='rounded-lg border border-zinc-200 bg-zinc-50 p-2.5'>
-                <div className='mb-2 flex items-center justify-between'>
-                  <p className='text-xs font-medium text-zinc-700'>人体定位（离线预处理）</p>
-                  <button
-                    type='button'
-                    className='rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 disabled:opacity-50'
-                    disabled={isLoadingPersonCandidates}
-                    onClick={() => void loadPersonCandidatesForTime(videoRef.current?.currentTime ?? currentVideoTime)}
-                  >
-                    {isLoadingPersonCandidates ? '读取中...' : '刷新候选'}
-                  </button>
-                </div>
-                <p className='text-xs text-zinc-500'>
-                  可直接点击视频画面中的人体框选择对象；若当前时刻没有候选，仍可只记录驱力与时间片段。
-                </p>
-              </section>
-
-              <label className='flex items-center gap-2 text-sm text-zinc-700'>
-                <input type='checkbox' checked={quickMode} onChange={(event) => setQuickMode(event.target.checked)} />
-                快速模式
-              </label>
-
-              {!quickMode ? (
-                <label className='text-sm text-zinc-700'>
-                  评论
-                  <textarea
-                    className='mt-1 h-24 w-full rounded-md border border-zinc-300 px-2 py-1 text-sm'
-                    maxLength={MAX_COMMENT_LENGTH}
-                    value={comment}
-                    onChange={(event) => setComment(event.target.value)}
-                  />
-                </label>
-              ) : null}
-
-              <button
-                className='w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60'
-                type='submit'
-                disabled={saving || selectedDrivers.length === 0 || !selectedVideoId}
-              >
-                {saving ? '保存中...' : '保存标注'}
-              </button>
-
-              <details
-                className='rounded-lg border border-zinc-200 bg-zinc-50/80 p-2'
-                open={isDetailsOpen}
-                onToggle={(event) => setIsDetailsOpen(event.currentTarget.open)}
-              >
-                <summary className='cursor-pointer select-none text-sm font-medium text-zinc-700'>
-                  时间与近期标注
-                </summary>
-                <div className='mt-2 space-y-2'>
-                  <div className='grid grid-cols-2 gap-2'>
-                    <label className='text-xs text-zinc-500'>
-                      开始
-                      <input
-                        type='number'
-                        min={0}
-                        step={SNAP_STEP_SECONDS}
-                        value={segmentStart}
-                        onChange={(event) => setSegmentStart(Number(event.target.value))}
-                        className='mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-700'
-                      />
-                    </label>
-                    <label className='text-xs text-zinc-500'>
-                      结束
-                      <input
-                        type='number'
-                        min={0}
-                        step={SNAP_STEP_SECONDS}
-                        value={segmentEnd}
-                        onChange={(event) => setSegmentEnd(Number(event.target.value))}
-                        className='mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-700'
-                      />
-                    </label>
-                  </div>
-                  <p className='text-xs text-zinc-500'>
-                    默认取当前播放时间前后 2 秒，并按 {SNAP_STEP_SECONDS}s 对齐，最短 {MIN_SEGMENT_SECONDS}s。
-                  </p>
-                  {loadingAnnotations ? <p className='text-xs text-zinc-500'>加载标注中...</p> : null}
-                  {mode === 'supervision' ? (
-                    <div className='space-y-1.5'>
-                      {clusters.length === 0 ? (
-                        <p className='text-xs text-zinc-500'>暂无标注。</p>
-                      ) : (
-                        clusters.slice(0, 8).map((cluster, index) => (
-                          <div key={`${cluster.start_sec}-${cluster.end_sec}-${index}`} className='rounded-md border border-zinc-200 bg-white p-2'>
-                            <p className='text-xs font-medium text-zinc-900'>
-                              {formatSeconds(cluster.start_sec)} - {formatSeconds(cluster.end_sec)}
-                            </p>
-                            <p className='text-xs text-zinc-600'>{cluster.annotations.length} 条标注</p>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  ) : (
-                    <div className='space-y-1.5'>
-                      {visibleAnnotations.length === 0 ? (
-                        <p className='text-xs text-zinc-500'>你还没有标注。</p>
-                      ) : (
-                        visibleAnnotations.slice(0, 8).map((item) => (
-                          <div key={item.id} className='rounded-md border border-zinc-200 bg-white p-2'>
-                            <p className='text-xs font-medium text-zinc-900'>
-                              {formatSeconds(item.start_sec)} - {formatSeconds(item.end_sec)}
-                            </p>
-                            <p className='text-xs text-zinc-700'>
-                              {item.drivers.map((driver) => DRIVE_LABEL_MAP[driver] ?? driver).join('、')}
-                            </p>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-              </details>
-            </form>
-
-            {queryError ? (
-              <p className='mt-3 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-800'>
-                {queryError}
-              </p>
-            ) : null}
-          </section>
-        </div>
-      ) : null}
+      {annotationPortalHost ? createPortal(annotationOverlay, annotationPortalHost) : annotationOverlay}
 
       {isOnboardingOpen ? (
         <div className='pointer-events-none fixed inset-0 z-[120] p-4' role='dialog' aria-modal='true'>
@@ -1581,7 +1680,7 @@ export default function Home() {
                   disabled={onboardingStepIndex === 0}
                   className='rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 disabled:opacity-40'
                 >
-                  上一步
+                  婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘川閸楁岸鏌熺紒銏犳灍闁?
                 </button>
                 <button
                   type='button'
@@ -1599,4 +1698,5 @@ export default function Home() {
     </main>
   );
 }
+
 
