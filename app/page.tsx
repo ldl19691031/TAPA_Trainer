@@ -1363,19 +1363,6 @@ export default function Home() {
                 {saving ? '保存中...' : '保存标注'}
               </button>
             </div>
-            {loadingAnnotations ? (
-              <p className='text-xs text-zinc-500'>加载标注中...</p>
-            ) : (
-              <p className='text-xs text-zinc-500'>
-                当前时间片段：{formatSeconds(segmentStart)} - {formatSeconds(segmentEnd)}
-              </p>
-            )}
-            {mode === 'supervision' && clusters.length > 0 ? (
-              <p className='text-xs text-zinc-500'>督导模式：当前视频共 {clusters.length} 个合并片段。</p>
-            ) : null}
-            {mode === 'practice' && visibleAnnotations.length > 0 ? (
-              <p className='text-xs text-zinc-500'>练习模式：你已标注 {visibleAnnotations.length} 条。</p>
-            ) : null}
           </form>
 
           {queryError ? (
