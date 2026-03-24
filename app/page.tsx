@@ -58,15 +58,27 @@ const SNAP_STEP_SECONDS = 0.5;
 const MERGE_THRESHOLD = 0.5;
 const MAX_COMMENT_LENGTH = 1000;
 const ONBOARDING_STORAGE_KEY = 'tapa_onboarding_seen_version';
-const ONBOARDING_VERSION = 'v2';
+const ONBOARDING_VERSION = 'v3';
+const ONBOARDING_DEMO_VIDEO_KEYWORD = '\u6797\u4f9d\u6668';
+const ONBOARDING_DEMO_VIDEO_SEEK_SEC = 255;
 const PLAYBACK_RATE_OPTIONS = [0.2, 0.3, 0.5, 0.75, 1] as const;
 const SPEED_MENU_WIDTH = 120;
 const TAGS_ICON_SVG =
   "<svg viewBox='0 0 24 24' aria-hidden='true' class='h-4 w-4'><path d='M20 10.5L13.5 4H6v7.5L12.5 18 20 10.5zm-10.5-3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM8 14l4.5 4.5a2 2 0 0 0 2.8 0l5.2-5.2a2 2 0 0 0 0-2.8L16 6' fill='none' stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>";
 
-type OnboardingTargetId = 'video_select' | 'annotation_button' | 'speed_button';
+type OnboardingTargetId =
+  | 'video_select'
+  | 'transport_controls'
+  | 'annotation_button'
+  | 'person_pick'
+  | 'driver_select'
+  | 'save_annotation'
+  | 'my_annotations_button'
+  | 'annotation_card'
+  | 'menu_button';
 
 type OnboardingStep = {
+  id: string;
   title: string;
   description: string;
   targetId: OnboardingTargetId;
@@ -76,23 +88,78 @@ type OnboardingStep = {
 
 const ONBOARDING_STEPS: OnboardingStep[] = [
   {
-    title: '切换视频',
-    description: '在页面左上角通过下拉框切换当前训练视频。切换后会自动刷新对应标注数据。',
+    id: 'switch_video',
+    title: '\u5207\u6362\u89c6\u9891',
+    description:
+      '\u5728\u9875\u9762\u5de6\u4e0a\u89d2\u901a\u8fc7\u4e0b\u62c9\u6846\u5207\u6362\u5f53\u524d\u8bad\u7ec3\u89c6\u9891\u3002',
     targetId: 'video_select',
     requireAction: true,
-    actionHint: '请先点击一次左上角视频下拉框，再进入下一步。',
+    actionHint:
+      '\u8bf7\u70b9\u51fb\u4e00\u6b21\u5de6\u4e0a\u89d2\u89c6\u9891\u4e0b\u62c9\u6846\uff0c\u5b8c\u6210\u540e\u518d\u8fdb\u5165\u4e0b\u4e00\u6b65\u3002',
   },
   {
-    title: '打开标注',
-    description: '使用播放器控制条中的标注按钮打开标注面板。默认时间段为当前时间前后各 1 秒。',
+    id: 'playback_controls',
+    title: '\u64ad\u653e\u63a7\u5236',
+    description:
+      '\u8fd9\u4e00\u6392\u6309\u94ae\u5305\u542b -3s\u3001+3s \u548c\u901f\u5ea6\u3002\u53ef\u7528\u4e8e\u7ec6\u770b\u67d0\u4e2a\u7247\u6bb5\u3002',
+    targetId: 'transport_controls',
+    requireAction: true,
+    actionHint:
+      '\u8bf7\u70b9\u51fb\u4e00\u6b21 -3s\u3001+3s \u6216\u901f\u5ea6\u6309\u94ae\u4e2d\u7684\u4efb\u610f\u4e00\u4e2a\u3002',
+  },
+  {
+    id: 'open_annotation_on_demo',
+    title: '\u6253\u5f00\u793a\u4f8b\u6807\u6ce8',
+    description:
+      '\u73b0\u5728\u4f1a\u81ea\u52a8\u5207\u6362\u5230\u300c\u6797\u4f9d\u6668\u300d\u89c6\u9891\u7684 4:15\u3002\u8bf7\u70b9\u51fb\u63a7\u5236\u6761\u4e0a\u7684\u6807\u6ce8\u6309\u94ae\u3002',
     targetId: 'annotation_button',
-    requireAction: false,
+    requireAction: true,
   },
   {
-    title: '播放速度',
-    description: '使用播放器控制条中的速度按钮选择倍速（0.2x、0.3x、0.5x、0.75x、1x）。',
-    targetId: 'speed_button',
-    requireAction: false,
+    id: 'select_person',
+    title: '\u9009\u62e9\u89c2\u5bdf\u5bf9\u8c61',
+    description:
+      '\u70b9\u51fb\u4eba\u7269\u9009\u62e9\u6309\u94ae\u540e\uff0c\u5728\u89c6\u9891\u753b\u9762\u4e2d\u70b9\u51fb\u4f60\u8981\u6807\u6ce8\u7684\u90a3\u4e2a\u4eba\u3002',
+    targetId: 'person_pick',
+    requireAction: true,
+  },
+  {
+    id: 'select_drive',
+    title: '\u9009\u62e9\u9a71\u529b',
+    description: '\u5728\u6807\u6ce8\u9762\u677f\u4e2d\u9009\u62e9\u4e00\u4e2a\u6216\u591a\u4e2a\u9a71\u529b\u3002',
+    targetId: 'driver_select',
+    requireAction: true,
+  },
+  {
+    id: 'save_annotation',
+    title: '\u4fdd\u5b58\u6807\u6ce8',
+    description: '\u70b9\u51fb\u4fdd\u5b58\u6807\u6ce8\u6309\u94ae\uff0c\u5c06\u5f53\u524d\u6807\u6ce8\u4fdd\u5b58\u5230\u670d\u52a1\u7aef\u3002',
+    targetId: 'save_annotation',
+    requireAction: true,
+  },
+  {
+    id: 'open_annotation_history',
+    title: '\u6253\u5f00\u6807\u6ce8\u5217\u8868',
+    description:
+      '\u70b9\u51fb\u9876\u90e8\u53f3\u4e0a\u89d2\u7684\u6807\u6ce8\u5217\u8868\u6309\u94ae\uff0c\u67e5\u770b\u4f60\u521a\u624d\u4fdd\u5b58\u7684\u6807\u6ce8\u5361\u7247\u3002',
+    targetId: 'my_annotations_button',
+    requireAction: true,
+  },
+  {
+    id: 'jump_by_annotation_card',
+    title: '\u901a\u8fc7\u5361\u7247\u8df3\u8f6c',
+    description:
+      '\u70b9\u51fb\u4efb\u610f\u4e00\u5f20\u6807\u6ce8\u5361\u7247\uff0c\u64ad\u653e\u5668\u4f1a\u8df3\u8f6c\u5230\u5bf9\u5e94\u65f6\u95f4\u70b9\u3002',
+    targetId: 'annotation_card',
+    requireAction: true,
+  },
+  {
+    id: 'open_hamburger_menu',
+    title: '\u6253\u5f00\u6c49\u5821\u83dc\u5355',
+    description:
+      '\u6700\u540e\u70b9\u51fb\u53f3\u4e0a\u89d2\u6c49\u5821\u83dc\u5355\uff0c\u5237\u65b0\u64ad\u653e\u94fe\u63a5\u3001\u5e2e\u52a9\u3001\u767b\u51fa\u7b49\u9009\u9879\u90fd\u5728\u8fd9\u91cc\u3002',
+    targetId: 'menu_button',
+    requireAction: true,
   },
 ] as const;
 
@@ -465,13 +532,41 @@ export default function Home() {
     top: number;
     left: number;
   } | null>(null);
+  const [pendingOnboardingSeekSec, setPendingOnboardingSeekSec] = useState<number | null>(null);
   const videoSelectRef = useRef<HTMLSelectElement | null>(null);
+  const backButtonRef = useRef<HTMLButtonElement | null>(null);
+  const forwardButtonRef = useRef<HTMLButtonElement | null>(null);
   const speedButtonRef = useRef<HTMLButtonElement | null>(null);
   const annotationButtonRef = useRef<HTMLButtonElement | null>(null);
+  const personPickButtonRef = useRef<HTMLButtonElement | null>(null);
+  const firstDriverButtonRef = useRef<HTMLButtonElement | null>(null);
+  const saveAnnotationButtonRef = useRef<HTMLButtonElement | null>(null);
+  const myAnnotationsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const firstAnnotationCardRef = useRef<HTMLElement | null>(null);
+  const onboardingPreparedStepIdsRef = useRef<Set<string>>(new Set());
+  const onboardingRuntimeRef = useRef<{
+    isOpen: boolean;
+    targetId: OnboardingTargetId;
+  }>({
+    isOpen: false,
+    targetId: 'video_select',
+  });
   const articleRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<Plyr | null>(null);
   const [videoOverlayLayout, setVideoOverlayLayout] = useState<VideoOverlayLayout | null>(null);
+
+  const markOnboardingAction = useCallback((targetId: OnboardingTargetId) => {
+    const runtime = onboardingRuntimeRef.current;
+    if (!runtime.isOpen || runtime.targetId !== targetId) {
+      return;
+    }
+    setOnboardingCompletedTargets((current) => ({
+      ...current,
+      [targetId]: true,
+    }));
+  }, []);
 
   const selectedVideo = useMemo(
     () => videos.find((video) => video.id === selectedVideoId) ?? null,
@@ -867,7 +962,8 @@ export default function Home() {
     setSelectedPersonTrackId(candidate.trackId);
     setSelectedPersonBox(candidate.box);
     setSelectedPersonTsSec(candidate.tsSec);
-  }, []);
+    markOnboardingAction('person_pick');
+  }, [markOnboardingAction]);
 
   const startPersonPicking = useCallback(async () => {
     const current = videoRef.current?.currentTime ?? currentVideoTime;
@@ -935,29 +1031,43 @@ export default function Home() {
       backButton.textContent = '-3s';
       backButton.title = '后退 3 秒';
       backButton.setAttribute('aria-label', '后退 3 秒');
-      backButton.onclick = () => seekBySeconds(-3);
+      backButton.onclick = () => {
+        markOnboardingAction('transport_controls');
+        seekBySeconds(-3);
+      };
 
       const forwardButton = getOrCreateButton('forward');
       forwardButton.textContent = '+3s';
       forwardButton.title = '前进 3 秒';
       forwardButton.setAttribute('aria-label', '前进 3 秒');
-      forwardButton.onclick = () => seekBySeconds(3);
+      forwardButton.onclick = () => {
+        markOnboardingAction('transport_controls');
+        seekBySeconds(3);
+      };
 
       const speedButton = getOrCreateButton('speed');
       speedButton.textContent = '\u23F1';
       speedButton.title = '播放速度';
       speedButton.setAttribute('aria-label', '播放速度');
-      speedButton.onclick = () => toggleSpeedMenu();
+      speedButton.onclick = () => {
+        markOnboardingAction('transport_controls');
+        toggleSpeedMenu();
+      };
       speedButton.classList.add('tapa-plyr-extra-btn-icon');
 
       const annotationButton = getOrCreateButton('annotation');
       annotationButton.innerHTML = TAGS_ICON_SVG;
       annotationButton.title = '打开标注';
       annotationButton.setAttribute('aria-label', '打开标注');
-      annotationButton.onclick = () => openAnnotationPanel();
+      annotationButton.onclick = () => {
+        markOnboardingAction('annotation_button');
+        openAnnotationPanel();
+      };
       annotationButton.classList.add('tapa-plyr-extra-btn-icon');
       annotationButton.classList.add('tapa-plyr-extra-btn-icon-svg');
       annotationButton.classList.add('tapa-plyr-extra-btn-primary');
+      backButtonRef.current = backButton;
+      forwardButtonRef.current = forwardButton;
       speedButtonRef.current = speedButton;
       annotationButtonRef.current = annotationButton;
     };
@@ -967,7 +1077,7 @@ export default function Home() {
       canceled = true;
       window.cancelAnimationFrame(rafId);
     };
-  }, [openAnnotationPanel, playUrl, seekBySeconds, toggleSpeedMenu]);
+  }, [markOnboardingAction, openAnnotationPanel, playUrl, seekBySeconds, toggleSpeedMenu]);
 
   const handleAddVideo = async (event: FormEvent) => {
     event.preventDefault();
@@ -1005,6 +1115,7 @@ export default function Home() {
   };
 
   const toggleDriver = (driverId: string) => {
+    markOnboardingAction('driver_select');
     setSelectedDrivers((current) =>
       current.includes(driverId)
         ? current.filter((item) => item !== driverId)
@@ -1158,6 +1269,7 @@ export default function Home() {
       return;
     }
 
+    markOnboardingAction('save_annotation');
     setSegmentStart(normalized.start);
     setSegmentEnd(normalized.end + MIN_SEGMENT_SECONDS);
     setSelectedDrivers([]);
@@ -1222,29 +1334,101 @@ export default function Home() {
       if (targetId === 'video_select') {
         return videoSelectRef.current;
       }
+      if (targetId === 'transport_controls') {
+        return speedButtonRef.current ?? backButtonRef.current ?? forwardButtonRef.current;
+      }
       if (targetId === 'annotation_button') {
         return annotationButtonRef.current;
       }
-      if (targetId === 'speed_button') {
-        return speedButtonRef.current;
+      if (targetId === 'person_pick') {
+        return personPickButtonRef.current;
+      }
+      if (targetId === 'driver_select') {
+        return firstDriverButtonRef.current;
+      }
+      if (targetId === 'save_annotation') {
+        return saveAnnotationButtonRef.current;
+      }
+      if (targetId === 'my_annotations_button') {
+        return myAnnotationsButtonRef.current;
+      }
+      if (targetId === 'annotation_card') {
+        return firstAnnotationCardRef.current;
+      }
+      if (targetId === 'menu_button') {
+        return menuButtonRef.current;
       }
       return null;
     },
     [],
   );
 
-  const markOnboardingAction = (targetId: OnboardingTargetId) => {
+  useEffect(() => {
+    onboardingRuntimeRef.current = {
+      isOpen: isOnboardingOpen,
+      targetId: currentOnboardingStep.targetId,
+    };
+  }, [currentOnboardingStep.targetId, isOnboardingOpen]);
+
+  useEffect(() => {
     if (!isOnboardingOpen) {
       return;
     }
-    if (currentOnboardingStep.targetId !== targetId) {
+    const stepId = currentOnboardingStep.id;
+    if (onboardingPreparedStepIdsRef.current.has(stepId)) {
       return;
     }
-    setOnboardingCompletedTargets((current) => ({
-      ...current,
-      [targetId]: true,
-    }));
-  };
+    onboardingPreparedStepIdsRef.current.add(stepId);
+
+    if (stepId === 'open_annotation_on_demo') {
+      const demoVideo = videos.find((video) => video.title.includes(ONBOARDING_DEMO_VIDEO_KEYWORD));
+      if (demoVideo?.id && demoVideo.id !== selectedVideoId) {
+        setSelectedVideoId(demoVideo.id);
+      }
+      setIsMyAnnotationsOpen(false);
+      setIsMenuOpen(false);
+      setPendingOnboardingSeekSec(ONBOARDING_DEMO_VIDEO_SEEK_SEC);
+      return;
+    }
+
+    if (stepId === 'jump_by_annotation_card') {
+      setIsMyAnnotationsOpen(true);
+      setIsMenuOpen(false);
+      return;
+    }
+
+    if (stepId === 'open_hamburger_menu') {
+      setIsMyAnnotationsOpen(false);
+      setIsMenuOpen(false);
+    }
+  }, [currentOnboardingStep.id, isOnboardingOpen, selectedVideoId, videos]);
+
+  useEffect(() => {
+    if (pendingOnboardingSeekSec === null) {
+      return;
+    }
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+    const applySeek = () => {
+      const currentVideo = videoRef.current;
+      if (!currentVideo || !Number.isFinite(currentVideo.duration) || currentVideo.duration <= 0) {
+        return;
+      }
+      const target = Math.max(0, Math.min(pendingOnboardingSeekSec, currentVideo.duration - 0.1));
+      currentVideo.currentTime = target;
+      setCurrentVideoTime(target);
+      setPendingOnboardingSeekSec(null);
+    };
+    applySeek();
+    if (pendingOnboardingSeekSec !== null) {
+      video.addEventListener('loadedmetadata', applySeek, { once: true });
+      return () => {
+        video.removeEventListener('loadedmetadata', applySeek);
+      };
+    }
+  }, [pendingOnboardingSeekSec]);
 
   useEffect(() => {
     if (!session) {
@@ -1253,8 +1437,10 @@ export default function Home() {
     const seenVersion = window.localStorage.getItem(ONBOARDING_STORAGE_KEY);
     if (seenVersion !== ONBOARDING_VERSION) {
       const timer = window.setTimeout(() => {
+        onboardingPreparedStepIdsRef.current = new Set();
         setOnboardingStepIndex(0);
         setOnboardingCompletedTargets({});
+        setPendingOnboardingSeekSec(null);
         setIsOnboardingOpen(true);
       }, 0);
       return () => {
@@ -1322,12 +1508,15 @@ export default function Home() {
     if (markAsSeen) {
       window.localStorage.setItem(ONBOARDING_STORAGE_KEY, ONBOARDING_VERSION);
     }
+    setPendingOnboardingSeekSec(null);
     setIsOnboardingOpen(false);
   };
 
   const openOnboarding = () => {
+    onboardingPreparedStepIdsRef.current = new Set();
     setOnboardingStepIndex(0);
     setOnboardingCompletedTargets({});
+    setPendingOnboardingSeekSec(null);
     setIsOnboardingOpen(true);
   };
 
@@ -1442,10 +1631,11 @@ export default function Home() {
 
           <form className='space-y-3' onSubmit={handleSubmitAnnotation}>
             <div className='flex flex-wrap gap-2'>
-              {DRIVE_OPTIONS.map((driver) => {
+              {DRIVE_OPTIONS.map((driver, index) => {
                 const active = selectedDrivers.includes(driver.id);
                 return (
                   <button
+                    ref={index === 0 ? firstDriverButtonRef : null}
                     key={driver.id}
                     type='button'
                     onClick={() => toggleDriver(driver.id)}
@@ -1501,6 +1691,7 @@ export default function Home() {
 
             <div className='flex items-center gap-2'>
               <button
+                ref={personPickButtonRef}
                 type='button'
                 className={`inline-flex h-10 w-10 items-center justify-center rounded-md border text-zinc-700 ${
                   isPersonPicking ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-zinc-300 hover:bg-zinc-50'
@@ -1512,6 +1703,7 @@ export default function Home() {
                 <IconUserTag />
               </button>
               <button
+                ref={saveAnnotationButtonRef}
                 className='w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60'
                 type='submit'
                 disabled={saving || selectedDrivers.length === 0 || !selectedVideoId}
@@ -1614,18 +1806,26 @@ export default function Home() {
           </div>
           <div className='flex items-center gap-2'>
             <button
+              ref={myAnnotationsButtonRef}
               className='inline-flex items-center justify-center rounded-md border border-zinc-300 px-2 py-2 text-zinc-700 hover:bg-zinc-50'
               type='button'
-              onClick={() => setIsMyAnnotationsOpen(true)}
+              onClick={() => {
+                markOnboardingAction('my_annotations_button');
+                setIsMyAnnotationsOpen(true);
+              }}
               title='我的标注'
               aria-label='我的标注'
             >
               <IconList />
             </button>
             <button
+              ref={menuButtonRef}
               className='inline-flex items-center justify-center rounded-md border border-zinc-300 px-2 py-2 text-zinc-700 hover:bg-zinc-50'
               type='button'
-              onClick={() => setIsMenuOpen(true)}
+              onClick={() => {
+                markOnboardingAction('menu_button');
+                setIsMenuOpen(true);
+              }}
               title='打开菜单'
               aria-label='打开菜单'
             >
@@ -1721,11 +1921,15 @@ export default function Home() {
                   当前视频还没有你的标注
                 </p>
               ) : (
-                currentVideoMyAnnotations.map((item) => (
+                currentVideoMyAnnotations.map((item, index) => (
                   <article
+                    ref={index === 0 ? firstAnnotationCardRef : null}
                     key={item.id}
                     className='group relative cursor-pointer overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:border-blue-300 hover:shadow-md'
-                    onClick={() => seekToTime(item.start_sec)}
+                    onClick={() => {
+                      markOnboardingAction('annotation_card');
+                      seekToTime(item.start_sec);
+                    }}
                     title={`跳转到 ${formatSeconds(item.start_sec)}`}
                   >
                     <button
