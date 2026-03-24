@@ -49,3 +49,51 @@ body {
 .tapa-player-shell .plyr {
   --plyr-color-main: #2563eb;
 }
+
+.tapa-player-shell .plyr--video .plyr__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tapa-plyr-extra {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+}
+
+.tapa-plyr-extra-btn {
+  min-width: 46px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.tapa-plyr-extra-btn-primary {
+  border-color: rgba(59, 130, 246, 0.85);
+  background: rgba(37, 99, 235, 0.9);
+}
+
+@media (max-width: 768px) {
+  .tapa-player-shell .plyr--video .plyr__controls {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .tapa-plyr-extra {
+    width: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+
+  .tapa-plyr-extra-btn {
+    height: 30px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+}

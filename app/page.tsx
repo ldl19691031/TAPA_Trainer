@@ -146,21 +146,6 @@ function IconSignOut() {
   );
 }
 
-function IconAnnotation() {
-  return (
-    <svg viewBox='0 0 24 24' aria-hidden='true' className='h-5 w-5'>
-      <path
-        d='M21 11.5a8.5 8.5 0 0 1-8.5 8.5H7l-4 3v-5.5A8.5 8.5 0 1 1 21 11.5zM12 8v7M8.5 11.5h7'
-        fill='none'
-        stroke='currentColor'
-        strokeWidth='2'
-        strokeLinecap='round'
-        strokeLinejoin='round'
-      />
-    </svg>
-  );
-}
-
 function IconClose() {
   return (
     <svg viewBox='0 0 24 24' aria-hidden='true' className='h-4 w-4'>
@@ -373,8 +358,8 @@ export default function Home() {
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-  const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [plyrReadySeq, setPlyrReadySeq] = useState(0);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
   const [onboardingCompletedTargets, setOnboardingCompletedTargets] = useState<
@@ -564,7 +549,7 @@ export default function Home() {
     setAnnotations([]);
   };
 
-  const setSpeed = (rate: number) => {
+  const setSpeed = useCallback((rate: number) => {
     setPlaybackRate(rate);
     if (videoRef.current) {
       videoRef.current.playbackRate = rate;
@@ -572,8 +557,13 @@ export default function Home() {
     if (playerRef.current) {
       playerRef.current.speed = rate;
     }
-    setIsSpeedMenuOpen(false);
-  };
+  }, []);
+
+  const cycleSpeed = useCallback(() => {
+    const index = PLAYBACK_RATE_OPTIONS.findIndex((rate) => rate === playbackRate);
+    const next = PLAYBACK_RATE_OPTIONS[(index + 1) % PLAYBACK_RATE_OPTIONS.length];
+    setSpeed(next);
+  }, [playbackRate, setSpeed]);
 
   const updateVideoOverlayLayout = useCallback(() => {
     const media = videoRef.current;
@@ -609,7 +599,7 @@ export default function Home() {
     });
   }, []);
 
-  const seekBySeconds = (deltaSeconds: number) => {
+  const seekBySeconds = useCallback((deltaSeconds: number) => {
     if (!videoRef.current && !playerRef.current) {
       return;
     }
@@ -623,7 +613,7 @@ export default function Home() {
     } else if (media) {
       media.currentTime = next;
     }
-  };
+  }, []);
 
   useEffect(() => {
     const element = videoRef.current;
@@ -645,6 +635,7 @@ export default function Home() {
       });
       localPlayer.speed = videoRef.current.playbackRate;
       playerRef.current = localPlayer;
+      setPlyrReadySeq((value) => value + 1);
     });
 
     return () => {
@@ -655,6 +646,7 @@ export default function Home() {
       if (playerRef.current === localPlayer) {
         playerRef.current = null;
       }
+      setPlyrReadySeq((value) => value + 1);
     };
   }, [playUrl]);
 
@@ -724,7 +716,7 @@ export default function Home() {
     setSelectedPersonTsSec(candidate.tsSec);
   }, []);
 
-  const openAnnotationPanel = () => {
+  const openAnnotationPanel = useCallback(() => {
     const current = videoRef.current?.currentTime ?? 0;
     const normalized = normalizeSegment(
       Math.max(0, current - 2),
@@ -736,7 +728,58 @@ export default function Home() {
     setSegmentEnd(normalized.end);
     setIsAnnotationOpen(true);
     void loadPersonCandidatesForTime(current);
-  };
+  }, [loadPersonCandidatesForTime]);
+
+  useEffect(() => {
+    const controls = playerRef.current?.elements?.controls as HTMLElement | undefined;
+    if (!controls) {
+      speedButtonRef.current = null;
+      annotationButtonRef.current = null;
+      return;
+    }
+
+    let container = controls.querySelector('.tapa-plyr-extra') as HTMLDivElement | null;
+    if (!container) {
+      container = document.createElement('div');
+      container.className = 'tapa-plyr-extra';
+      controls.appendChild(container);
+    }
+    container.replaceChildren();
+
+    const createButton = (label: string, title: string, onClick: () => void) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'plyr__control tapa-plyr-extra-btn';
+      button.textContent = label;
+      button.title = title;
+      button.setAttribute('aria-label', title);
+      button.addEventListener('click', onClick);
+      return button;
+    };
+
+    const backButton = createButton('-3s', '后退 3 秒', () => seekBySeconds(-3));
+    const forwardButton = createButton('+3s', '前进 3 秒', () => seekBySeconds(3));
+    const speedButton = createButton(`速度 ${playbackRate}x`, '切换播放速度', () => {
+      cycleSpeed();
+    });
+    const annotationButton = createButton('标注', '打开标注面板', () => {
+      openAnnotationPanel();
+    });
+    annotationButton.classList.add('tapa-plyr-extra-btn-primary');
+
+    container.append(backButton, forwardButton, speedButton, annotationButton);
+    speedButtonRef.current = speedButton;
+    annotationButtonRef.current = annotationButton;
+
+    return () => {
+      backButton.remove();
+      forwardButton.remove();
+      speedButton.remove();
+      annotationButton.remove();
+      speedButtonRef.current = null;
+      annotationButtonRef.current = null;
+    };
+  }, [cycleSpeed, openAnnotationPanel, playbackRate, plyrReadySeq, seekBySeconds]);
 
   const handleAddVideo = async (event: FormEvent) => {
     event.preventDefault();
@@ -974,7 +1017,6 @@ export default function Home() {
     currentOnboardingStep.targetId,
     getOnboardingTargetElement,
     isOnboardingOpen,
-    isSpeedMenuOpen,
     isAnnotationOpen,
     isLibraryOpen,
   ]);
@@ -1164,72 +1206,6 @@ export default function Home() {
           })}
         </article>
 
-        <div className='mt-2 flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-white shadow-sm'>
-          <div className='flex items-center gap-2'>
-            <button
-              type='button'
-              onClick={() => seekBySeconds(-3)}
-              className='rounded-md border border-zinc-600 px-2.5 py-1 text-xs font-medium hover:bg-zinc-800'
-              title='后退 3 秒'
-              aria-label='后退 3 秒'
-            >
-              -3s
-            </button>
-            <button
-              type='button'
-              onClick={() => seekBySeconds(3)}
-              className='rounded-md border border-zinc-600 px-2.5 py-1 text-xs font-medium hover:bg-zinc-800'
-              title='前进 3 秒'
-              aria-label='前进 3 秒'
-            >
-              +3s
-            </button>
-            <div className='relative'>
-              <button
-                ref={speedButtonRef}
-                type='button'
-                onClick={() => {
-                  markOnboardingAction('speed_button');
-                  setIsSpeedMenuOpen((value) => !value);
-                }}
-                className='rounded-md border border-zinc-600 px-3 py-1 text-xs font-medium hover:bg-zinc-800'
-              >
-                速度 {playbackRate}x
-              </button>
-              {isSpeedMenuOpen ? (
-                <div className='absolute bottom-10 left-0 z-20 w-28 rounded-xl border border-zinc-200 bg-white p-1 shadow-lg'>
-                  {PLAYBACK_RATE_OPTIONS.map((rate) => (
-                    <button
-                      key={rate}
-                      type='button'
-                      onClick={() => setSpeed(rate)}
-                      className={`w-full rounded-md px-2 py-1.5 text-left text-sm ${
-                        playbackRate === rate
-                          ? 'bg-zinc-900 text-white'
-                          : 'text-zinc-700 hover:bg-zinc-100'
-                      }`}
-                    >
-                      {rate}x
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <button
-            ref={annotationButtonRef}
-            type='button'
-            onClick={() => {
-              markOnboardingAction('annotation_button');
-              openAnnotationPanel();
-            }}
-            className='inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700'
-          >
-            <IconAnnotation />
-            标注
-          </button>
-        </div>
       </section>
 
       {isLibraryOpen ? (
