@@ -84,6 +84,15 @@ body {
 .tapa-plyr-extra-btn-icon-svg svg {
   width: 16px;
   height: 16px;
+  display: block;
+  margin: 0 auto;
+  pointer-events: none;
+}
+
+.tapa-plyr-extra-btn-icon-svg {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
 }
 
 .tapa-plyr-extra-btn-primary {

@@ -40,6 +40,7 @@ type AnnotationRow = {
   person_track_id: number | null;
   person_ts_sec: number | null;
   person_box: NormalizedBox | null;
+  thumb_base64: string | null;
   created_at: string;
 };
 
@@ -195,6 +196,21 @@ function IconMenu() {
   );
 }
 
+function IconList() {
+  return (
+    <svg viewBox='0 0 24 24' aria-hidden='true' className='h-5 w-5'>
+      <path
+        d='M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01'
+        fill='none'
+        stroke='currentColor'
+        strokeWidth='2'
+        strokeLinecap='round'
+        strokeLinejoin='round'
+      />
+    </svg>
+  );
+}
+
 function IconUserTag() {
   return (
     <svg viewBox='0 0 24 24' aria-hidden='true' className='h-4 w-4'>
@@ -298,7 +314,7 @@ async function loadAnnotations(
   const primary = await supabase
     .from('annotations')
     .select(
-      'id,video_id,user_id,start_sec,end_sec,drivers,comment,person_track_id,person_ts_sec,person_box,created_at',
+      'id,video_id,user_id,start_sec,end_sec,drivers,comment,person_track_id,person_ts_sec,person_box,thumb_base64,created_at',
     )
     .eq('video_id', videoId)
     .order('start_sec', { ascending: true });
@@ -308,7 +324,8 @@ async function loadAnnotations(
   if (
     !primary.error.message.includes('person_track_id') &&
     !primary.error.message.includes('person_box') &&
-    !primary.error.message.includes('person_ts_sec')
+    !primary.error.message.includes('person_ts_sec') &&
+    !primary.error.message.includes('thumb_base64')
   ) {
     return { rows: [], error: 'Read annotations failed: ' + primary.error.message };
   }
@@ -322,10 +339,11 @@ async function loadAnnotations(
     return { rows: [], error: 'Read annotations failed: ' + fallback.error.message };
   }
   const rows = (fallback.data ?? []).map((row) => ({
-    ...(row as Omit<AnnotationRow, 'person_track_id' | 'person_ts_sec' | 'person_box'>),
+    ...(row as Omit<AnnotationRow, 'person_track_id' | 'person_ts_sec' | 'person_box' | 'thumb_base64'>),
     person_track_id: null,
     person_ts_sec: null,
     person_box: null,
+    thumb_base64: null,
   }));
   return { rows, error: null };
 }
@@ -349,6 +367,24 @@ async function loadPersonFrameRows(
     return { rows: [], error: 'Read person candidates failed: ' + error.message };
   }
   return { rows: (data ?? []) as PersonFrameRow[], error: null };
+}
+
+function captureThumbnailBase64(video: HTMLVideoElement | null): string | null {
+  if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
+    return null;
+  }
+  const targetWidth = 160;
+  const targetHeight = Math.max(90, Math.round((targetWidth / video.videoWidth) * video.videoHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return null;
+  }
+  context.drawImage(video, 0, 0, targetWidth, targetHeight);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.45);
+  return dataUrl || null;
 }
 
 export default function Home() {
@@ -390,6 +426,7 @@ export default function Home() {
   const [isLoadingPersonCandidates, setIsLoadingPersonCandidates] = useState(false);
 
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+  const [isMyAnnotationsOpen, setIsMyAnnotationsOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
   const [isPersonPicking, setIsPersonPicking] = useState(false);
@@ -906,6 +943,7 @@ export default function Home() {
       annotationButton.classList.add('tapa-plyr-extra-btn-icon');
       annotationButton.classList.add('tapa-plyr-extra-btn-icon-svg');
       annotationButton.classList.add('tapa-plyr-extra-btn-primary');
+      speedButtonRef.current = speedButton;
       annotationButtonRef.current = annotationButton;
     };
 
@@ -983,6 +1021,7 @@ export default function Home() {
       SNAP_STEP_SECONDS,
       MIN_SEGMENT_SECONDS,
     );
+    const thumbBase64 = captureThumbnailBase64(videoRef.current);
     setSaving(true);
     const payload = {
       video_id: selectedVideo.id,
@@ -993,18 +1032,21 @@ export default function Home() {
       person_track_id: selectedPersonTrackId,
       person_ts_sec: selectedPersonTsSec,
       person_box: selectedPersonBox,
+      thumb_base64: thumbBase64,
     };
     let { error } = await supabase.from('annotations').insert(payload);
     if (
       error?.message.includes('person_track_id') ||
       error?.message.includes('person_box') ||
-      error?.message.includes('person_ts_sec')
+      error?.message.includes('person_ts_sec') ||
+      error?.message.includes('thumb_base64')
     ) {
       const fallbackResult = await supabase.from('annotations').insert({
         ...payload,
         person_track_id: null,
         person_ts_sec: null,
         person_box: null,
+        thumb_base64: null,
       });
       error = fallbackResult.error;
       if (!error) {
@@ -1035,6 +1077,13 @@ export default function Home() {
       ? annotations.filter((item) => item.user_id === session.user.id)
       : annotations;
   }, [annotations, mode, session]);
+
+  const myAnnotations = useMemo(() => {
+    if (!session) {
+      return [];
+    }
+    return annotations.filter((item) => item.user_id === session.user.id);
+  }, [annotations, session]);
 
   const activePersonAnnotations = useMemo(
     () =>
@@ -1314,22 +1363,16 @@ export default function Home() {
               })}
             </div>
 
-            <section className='rounded-lg border border-zinc-200 bg-zinc-50 p-2.5'>
-              <div className='mb-2 flex items-center justify-between'>
-                <p className='text-xs font-medium text-zinc-700'>人体定位（离线预处理）</p>
-                <button
-                  type='button'
-                  className='rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 disabled:opacity-50'
-                  disabled={isLoadingPersonCandidates}
-                  onClick={() => void loadPersonCandidatesForTime(videoRef.current?.currentTime ?? currentVideoTime)}
-                >
-                  {isLoadingPersonCandidates ? '读取中...' : '刷新候选'}
-                </button>
-              </div>
-              <p className='text-xs text-zinc-500'>
-                可直接点击视频画面中的人体框选择对象；若当前时刻没有候选，仍可只记录驱力与时间片段。
-              </p>
-            </section>
+            <div className='flex justify-end'>
+              <button
+                type='button'
+                className='rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 disabled:opacity-50'
+                disabled={isLoadingPersonCandidates}
+                onClick={() => void loadPersonCandidatesForTime(videoRef.current?.currentTime ?? currentVideoTime)}
+              >
+                {isLoadingPersonCandidates ? '读取中...' : '刷新候选'}
+              </button>
+            </div>
 
             {!quickMode ? (
               <label className='text-sm text-zinc-700'>
@@ -1442,6 +1485,15 @@ export default function Home() {
             <button
               className='inline-flex items-center justify-center rounded-md border border-zinc-300 px-2 py-2 text-zinc-700 hover:bg-zinc-50'
               type='button'
+              onClick={() => setIsMyAnnotationsOpen(true)}
+              title='我的标注'
+              aria-label='我的标注'
+            >
+              <IconList />
+            </button>
+            <button
+              className='inline-flex items-center justify-center rounded-md border border-zinc-300 px-2 py-2 text-zinc-700 hover:bg-zinc-50'
+              type='button'
               onClick={() => setIsMenuOpen(true)}
               title='打开菜单'
               aria-label='打开菜单'
@@ -1510,7 +1562,54 @@ export default function Home() {
 
       </section>
 
-            {isMenuOpen ? (
+      {isMyAnnotationsOpen ? (
+        <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
+          <div className='ml-auto h-full w-full max-w-md overflow-y-auto bg-white p-5 shadow-2xl'>
+            <div className='mb-4 flex items-center justify-between'>
+              <h2 className='text-base font-semibold text-zinc-900'>我的标注</h2>
+              <button
+                className='inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-50'
+                onClick={() => setIsMyAnnotationsOpen(false)}
+                type='button'
+                aria-label='关闭标注侧栏'
+                title='关闭标注侧栏'
+              >
+                <IconClose />
+              </button>
+            </div>
+            <p className='mb-3 text-sm text-zinc-600'>当前视频：{selectedVideo?.title ?? '未选择视频'}</p>
+            <div className='space-y-2'>
+              {myAnnotations.length === 0 ? (
+                <p className='rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500'>
+                  暂无你的标注
+                </p>
+              ) : (
+                myAnnotations.map((item) => (
+                  <article key={item.id} className='rounded-md border border-zinc-200 p-3'>
+                    <p className='text-sm font-medium text-zinc-900'>
+                      {formatSeconds(item.start_sec)} - {formatSeconds(item.end_sec)}
+                    </p>
+                    <p className='mt-1 text-sm text-zinc-700'>
+                      {item.drivers.map((driver) => DRIVE_LABEL_MAP[driver] ?? driver).join('、')}
+                    </p>
+                    {item.thumb_base64 ? (
+                      <img
+                        src={item.thumb_base64}
+                        alt='annotation thumbnail'
+                        className='mt-2 h-16 w-auto rounded border border-zinc-200 bg-zinc-100'
+                      />
+                    ) : null}
+                    {item.comment ? <p className='mt-1 text-sm text-zinc-500'>{item.comment}</p> : null}
+                    <p className='mt-1 text-xs text-zinc-400'>{new Date(item.created_at).toLocaleString()}</p>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isMenuOpen ? (
         <div className='fixed inset-0 z-50 flex bg-black/40' role='dialog' aria-modal='true'>
           <div className='ml-auto h-full w-full max-w-sm overflow-y-auto bg-white p-5 shadow-2xl'>
             <div className='mb-4 flex items-center justify-between'>
