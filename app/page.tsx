@@ -1392,12 +1392,24 @@ export default function Home() {
     }
 
     if (stepId === 'jump_by_annotation_card') {
+      setIsAnnotationOpen(false);
+      setIsPersonPicking(false);
       setIsMyAnnotationsOpen(true);
       setIsMenuOpen(false);
       return;
     }
 
+    if (stepId === 'open_annotation_history') {
+      setIsAnnotationOpen(false);
+      setIsPersonPicking(false);
+      setIsMyAnnotationsOpen(false);
+      setIsMenuOpen(false);
+      return;
+    }
+
     if (stepId === 'open_hamburger_menu') {
+      setIsAnnotationOpen(false);
+      setIsPersonPicking(false);
       setIsMyAnnotationsOpen(false);
       setIsMenuOpen(false);
     }
