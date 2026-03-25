@@ -404,6 +404,7 @@ export default function Home() {
   const playUrlRecoveryAttemptRef = useRef(0);
   const currentVideoTimeRef = useRef(0);
   const pendingPlaybackResumeSecRef = useRef<number | null>(null);
+  const annotationResumePlaybackRef = useRef(false);
   const playUrlLoadingStartedAtRef = useRef(0);
   const [videoOverlayLayout, setVideoOverlayLayout] = useState<VideoOverlayLayout | null>(null);
 
@@ -830,6 +831,39 @@ export default function Home() {
       playerRef.current.speed = playbackRate;
     }
   }, [playbackRate]);
+
+  useEffect(() => {
+    if (isAnnotationOpen) {
+      const media = videoRef.current;
+      const isPlaying = playerRef.current
+        ? !playerRef.current.paused
+        : Boolean(media && !media.paused && !media.ended);
+      annotationResumePlaybackRef.current = isPlaying;
+      if (playerRef.current) {
+        playerRef.current.pause();
+        return;
+      }
+      media?.pause();
+      return;
+    }
+
+    if (!annotationResumePlaybackRef.current) {
+      return;
+    }
+    annotationResumePlaybackRef.current = false;
+
+    if (playerRef.current) {
+      const playResult = playerRef.current.play();
+      if (playResult && typeof playResult.then === 'function') {
+        void playResult.catch(() => undefined);
+      }
+      return;
+    }
+    const nativePlayResult = videoRef.current?.play();
+    if (nativePlayResult && typeof nativePlayResult.then === 'function') {
+      void nativePlayResult.catch(() => undefined);
+    }
+  }, [isAnnotationOpen]);
 
   useEffect(() => {
     if (!isSpeedMenuOpen) {
