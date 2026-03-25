@@ -25,20 +25,22 @@ export function PlayerSurface({
         ref={articleRef}
         className='tapa-player-shell relative overflow-hidden rounded-2xl border border-zinc-200 bg-black shadow-sm'
       >
-        <div>
-          {loadingPlayUrl ? (
-            <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center gap-3 text-sm text-zinc-300'>
-              <span className='inline-block h-4 w-4 animate-spin rounded-full border-2 border-zinc-500 border-t-white' />
-              <span>{'视频加载中'}</span>
+        {playUrl ? (
+          <div ref={playerMountRef} className='h-[calc(100vh-92px)] w-full bg-black' />
+        ) : (
+          <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center text-sm text-zinc-300'>
+            {playUrlError || '??????????????????????'}
+          </div>
+        )}
+
+        {loadingPlayUrl ? (
+          <div className='absolute inset-0 z-20 flex items-center justify-center bg-black/35 backdrop-blur-[1px]'>
+            <div className='inline-flex items-center gap-3 rounded-full bg-black/55 px-4 py-2 text-sm text-zinc-100 shadow-lg'>
+              <span className='inline-block h-4 w-4 animate-spin rounded-full border-2 border-zinc-400 border-t-white' />
+              <span>{'?????'}</span>
             </div>
-          ) : playUrl ? (
-            <div ref={playerMountRef} className='h-[calc(100vh-92px)] w-full bg-black' />
-          ) : (
-            <div className='flex h-[calc(100vh-92px)] w-full items-center justify-center text-sm text-zinc-300'>
-              {playUrlError || '暂无可播放链接，请先在视频库选择或新增视频。'}
-            </div>
-          )}
-        </div>
+          </div>
+        ) : null}
 
         {!isAnnotationOpen ? activePersonAnnotations : null}
       </article>
